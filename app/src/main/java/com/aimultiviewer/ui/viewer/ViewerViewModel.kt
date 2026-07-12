@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.aimultiviewer.App
 import com.aimultiviewer.data.parser.ParserRegistry
+import com.aimultiviewer.data.wiki.WikiExporter
 import com.aimultiviewer.domain.model.DocFormat
 import com.aimultiviewer.domain.model.Document
 import com.aimultiviewer.domain.model.DocumentContent
@@ -49,6 +50,13 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
             } else doc.format
             val content = ParserRegistry.parse(appCtx, Uri.parse(doc.uri), format)
             _state.value = _state.value.copy(content = content, loading = false)
+
+            // llm-wiki 자동 수집: 열람한 문서를 Obsidian 마크다운으로 변환해 축적
+            if (appCtx.settingsStore.wikiAutoExport && content.plainText.isNotBlank()) {
+                launch {
+                    runCatching { WikiExporter(appCtx).export(doc.copy(format = format), content) }
+                }
+            }
         }
     }
 

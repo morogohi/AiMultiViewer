@@ -25,6 +25,11 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_MODEL, DEFAULT_MODEL) ?: DEFAULT_MODEL
         set(v) = prefs.edit().putString(KEY_MODEL, v).apply()
 
+    /** 열람 문서를 llm-wiki 마크다운으로 자동 수집 (기본 켜짐) */
+    var wikiAutoExport: Boolean
+        get() = prefs.getBoolean(KEY_WIKI_EXPORT, true)
+        set(v) = prefs.edit().putBoolean(KEY_WIKI_EXPORT, v).apply()
+
     val isCloudReady: Boolean
         get() = cloudEnabled && apiKey.isNotBlank()
 
@@ -33,6 +38,7 @@ class SettingsStore(context: Context) {
         private const val KEY_BASE_URL = "base_url"
         private const val KEY_API_KEY = "api_key"
         private const val KEY_MODEL = "model"
+        private const val KEY_WIKI_EXPORT = "wiki_auto_export"
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
         const val DEFAULT_MODEL = "gpt-4o-mini"
     }

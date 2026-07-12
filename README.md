@@ -39,6 +39,22 @@
 > 클라우드 기능은 OpenAI 호환 API를 사용합니다. 설정에서 Base URL / API Key / 모델명을 입력하세요.
 > 요약은 키 없이 온디바이스로 즉시 동작합니다.
 
+## llm-wiki 자동 수집 (Obsidian 연동)
+
+앱에서 문서를 열람하면 자동으로 Obsidian 호환 마크다운(YAML 프런트매터 + 자동 요약 + 전문)으로
+변환되어 기기의 `Documents/llm-wiki/` 폴더에 축적됩니다. 같은 문서를 다시 열면 갱신되어 중복이 생기지 않습니다.
+
+PC의 Obsidian 볼트로 수집하려면:
+
+```powershell
+# 기기(USB) 또는 에뮬레이터 연결 후
+powershell -ExecutionPolicy Bypass -File .\sync_wiki_from_device.ps1
+```
+
+기본적으로 `llm-wiki-research/inbox/aimultiviewer/` 로 가져오며, Windows 작업 스케줄러에
+`llm-wiki-sync` 작업으로 등록하면 매시간 자동 동기화됩니다. 끄고 싶으면 앱 설정에서
+"열람 문서 자동 수집" 토글을 비활성화하세요.
+
 ## 빌드 / 실행
 
 ### 사전 요구사항
@@ -90,4 +106,4 @@ data/
 ## 로드맵
 - M2: HWP/DOC 네이티브 바이너리 파서
 - M3: 온디바이스 LLM(MediaPipe/Gemma) + 벡터 검색 기반 진짜 RAG
-- M4: Obsidian 볼트 내보내기(SAF, Markdown + 위키링크)
+- ~~M4: Obsidian 볼트 내보내기~~ ✅ v0.3.0 완료 (llm-wiki 자동 수집)

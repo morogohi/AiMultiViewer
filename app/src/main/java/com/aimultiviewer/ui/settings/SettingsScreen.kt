@@ -42,6 +42,7 @@ fun SettingsScreen(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
     var model by remember { mutableStateOf(initial.model) }
+    var wikiExport by remember { mutableStateOf(initial.wikiAutoExport) }
     var saved by remember { mutableStateOf(false) }
 
     Scaffold(
@@ -103,16 +104,32 @@ fun SettingsScreen(
                 singleLine = true
             )
 
+            Text("llm-wiki 자동 수집", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "열람한 문서를 Obsidian 호환 마크다운(요약+전문)으로 변환해 " +
+                    "기기 Documents/llm-wiki/ 폴더에 자동 축적합니다. " +
+                    "PC의 llm-wiki 볼트로는 동기화 스크립트로 수집합니다.",
+                style = MaterialTheme.typography.bodySmall
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("열람 문서 자동 수집")
+                Switch(checked = wikiExport, onCheckedChange = { wikiExport = it; saved = false })
+            }
+
             Button(
                 onClick = {
-                    viewModel.save(SettingsSnapshot(cloudEnabled, baseUrl, apiKey, model))
+                    viewModel.save(SettingsSnapshot(cloudEnabled, baseUrl, apiKey, model, wikiExport))
                     saved = true
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text(if (saved) "저장됨 ✓" else "저장") }
 
             Text(
-                "지원 문서: HWPX · DOCX · PDF · TXT · Markdown (HWP/DOC 구버전은 후속 지원)",
+                "지원 문서: HWPX · DOCX · PPTX · XLSX · PDF · ODF · 이미지(OCR) · Google 문서 · TXT · Markdown",
                 style = MaterialTheme.typography.bodySmall
             )
         }

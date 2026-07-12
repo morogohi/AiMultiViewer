@@ -42,10 +42,12 @@ app/src/main/java/com/aimultiviewer/
 │   │   ├── ImageParser.kt     # ML Kit 온디바이스 OCR (한국어+라틴)
 │   │   ├── HwpxParser.kt      # OWPML(zip) 파싱
 │   │   └── UnsupportedBinaryParser.kt  # HWP/DOC 안내 메시지
-│   └── ai/
-│       ├── AiRepository.kt    # AI 기능 오케스트레이션
-│       ├── Summarizer.kt      # 온디바이스 추출 요약 (오프라인)
-│       └── LlmClient.kt       # OpenAI 호환 Chat Completions 클라이언트
+│   ├── ai/
+│   │   ├── AiRepository.kt    # AI 기능 오케스트레이션
+│   │   ├── Summarizer.kt      # 온디바이스 추출 요약 (오프라인)
+│   │   └── LlmClient.kt       # OpenAI 호환 Chat Completions 클라이언트
+│   └── wiki/
+│       └── WikiExporter.kt    # 열람 문서 → Obsidian 마크다운 자동 축적
 └── ui/
     ├── AppNavigation.kt       # Navigation Compose 라우팅
     ├── home/                  # 문서 목록 화면
@@ -60,6 +62,13 @@ app/src/main/java/com/aimultiviewer/
 - **파서 플러그인 구조**: 새 포맷은 `DocumentParser` 구현 후 `ParserRegistry`에 등록만 하면 됨
 - **AI 이중화**: 온디바이스 요약(키 불필요) + 클라우드 LLM(OpenAI 호환 API)
 - 문서 접근은 SAF(Storage Access Framework) URI 권한 유지 방식 사용
+
+### llm-wiki 자동 수집 파이프라인
+1. 뷰어에서 문서 파싱 성공 시 `WikiExporter`가 백그라운드로 실행
+2. YAML 프런트매터(title/format/collected/tags) + 온디바이스 요약 + 전문을 마크다운으로 조립
+3. MediaStore(API 29+)로 기기 `Documents/llm-wiki/<원본이름>.md` 에 기록 — 재열람 시 같은 파일 갱신(중복 방지)
+4. PC에서 `sync_wiki_from_device.ps1` 실행(또는 작업 스케줄러 `llm-wiki-sync`) → 볼트 `inbox/aimultiviewer/`로 수집
+5. 설정의 "열람 문서 자동 수집" 토글(`SettingsStore.wikiAutoExport`)로 on/off
 
 ## 3. 빌드
 
