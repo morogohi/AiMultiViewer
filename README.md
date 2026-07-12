@@ -19,7 +19,12 @@
 | Markdown | ✅ | ✅ | 경량 렌더러 |
 | PDF | ✅ | ✅ | 페이지 렌더 + 텍스트 추출 |
 | DOCX | ✅(텍스트) | ✅ | OOXML 파싱 |
+| PPTX | ✅(텍스트) | ✅ | 슬라이드별 텍스트 + 발표자 노트 |
+| XLSX | ✅(텍스트) | ✅ | 시트별 셀 값 추출 |
 | HWPX | ✅(텍스트) | ✅ | OWPML(한글 개방형) 파싱 |
+| ODT/ODS/ODP | ✅(텍스트) | ✅ | OpenDocument (Google Docs 내보내기 등) |
+| Google 문서 | ✅(PDF 렌더) | ✅ | Drive에서 선택 시 PDF로 내보내 판독 |
+| 이미지 (JPG/PNG 등) | ✅ | ✅ | 온디바이스 OCR(한국어+영문)로 텍스트 판독 |
 | HWP | ⏳ | ⏳ | 구 바이너리, 후속 지원(HWPX 권장) |
 | DOC | ⏳ | ⏳ | 구 바이너리, 후속 지원(DOCX 권장) |
 

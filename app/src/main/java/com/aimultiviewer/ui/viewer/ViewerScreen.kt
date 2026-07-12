@@ -107,8 +107,12 @@ private fun DocumentContentView(state: ViewerUiState) {
             )
         }
         when {
-            content.renderableUri != null && content.plainText.isBlank() ->
-                PdfViewer(uriString = content.renderableUri, modifier = Modifier.fillMaxSize())
+            content.renderableImageUri != null ->
+                ImageViewer(
+                    uriString = content.renderableImageUri,
+                    ocrText = content.plainText,
+                    modifier = Modifier.fillMaxSize()
+                )
 
             content.renderableUri != null ->
                 PdfViewer(uriString = content.renderableUri, modifier = Modifier.fillMaxSize())

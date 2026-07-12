@@ -9,6 +9,8 @@ data class DocumentContent(
     val isMarkdown: Boolean = false,
     /** PDF처럼 페이지 렌더가 필요한 경우 원본 Uri를 보관 */
     val renderableUri: String? = null,
+    /** 이미지 문서인 경우 원본 이미지 Uri (plainText에는 OCR 결과가 담김) */
+    val renderableImageUri: String? = null,
     val pageCount: Int = 0,
     val warning: String? = null
 )

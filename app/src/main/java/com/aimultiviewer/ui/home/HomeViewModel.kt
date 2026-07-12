@@ -27,11 +27,16 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         val name = queryName(uri)
+        // 확장자 우선, 실패 시 MIME 타입으로 판별 (Drive의 Google 문서 등)
+        var format = DocFormat.fromName(name)
+        if (format == DocFormat.UNKNOWN) {
+            format = DocFormat.fromMime(context.contentResolver.getType(uri))
+        }
         val doc = Document(
             id = UUID.randomUUID().toString(),
             uri = uri.toString(),
             name = name,
-            format = DocFormat.fromName(name),
+            format = format,
             importedAt = System.currentTimeMillis()
         )
         _documents.value = store.add(doc)

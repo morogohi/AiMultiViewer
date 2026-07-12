@@ -35,6 +35,11 @@ app/src/main/java/com/aimultiviewer/
 │   │   ├── MarkdownParser.kt
 │   │   ├── PdfParser.kt       # PdfRenderer(렌더) + PDFBox(텍스트)
 │   │   ├── DocxParser.kt      # OOXML(zip) 파싱
+│   │   ├── PptxParser.kt      # 슬라이드 텍스트 + 발표자 노트
+│   │   ├── XlsxParser.kt      # sharedStrings + 시트 셀 (XmlPullParser)
+│   │   ├── OdfParser.kt       # ODT/ODS/ODP (content.xml)
+│   │   ├── GoogleDocParser.kt # Drive 가상 파일 → PDF 내보내기 판독
+│   │   ├── ImageParser.kt     # ML Kit 온디바이스 OCR (한국어+라틴)
 │   │   ├── HwpxParser.kt      # OWPML(zip) 파싱
 │   │   └── UnsupportedBinaryParser.kt  # HWP/DOC 안내 메시지
 │   └── ai/

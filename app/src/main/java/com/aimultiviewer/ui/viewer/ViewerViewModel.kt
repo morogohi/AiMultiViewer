@@ -41,7 +41,13 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         }
         _state.value = ViewerUiState(document = doc, loading = true)
         viewModelScope.launch {
-            val content = ParserRegistry.parse(appCtx, Uri.parse(doc.uri), doc.format)
+            // 과거 버전에서 UNKNOWN으로 저장된 문서는 열 때 재판별 (신규 포맷 지원 대응)
+            val format = if (doc.format == DocFormat.UNKNOWN) {
+                val byName = DocFormat.fromName(doc.name)
+                if (byName != DocFormat.UNKNOWN) byName
+                else DocFormat.fromMime(appCtx.contentResolver.getType(Uri.parse(doc.uri)))
+            } else doc.format
+            val content = ParserRegistry.parse(appCtx, Uri.parse(doc.uri), format)
             _state.value = _state.value.copy(content = content, loading = false)
         }
     }

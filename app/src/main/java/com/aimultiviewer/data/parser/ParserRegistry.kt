@@ -14,7 +14,12 @@ object ParserRegistry {
         MarkdownParser(),
         PdfParser(),
         DocxParser(),
+        PptxParser(),
+        XlsxParser(),
+        OdfParser(),
         HwpxParser(),
+        GoogleDocParser(),
+        ImageParser(),
         // 구 바이너리 포맷은 후속 마일스톤에서 네이티브 파서로 대체
         UnsupportedBinaryParser()
     )

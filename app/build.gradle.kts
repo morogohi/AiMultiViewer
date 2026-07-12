@@ -23,8 +23,8 @@ android {
         applicationId = "com.aimultiviewer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.2.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -94,6 +94,10 @@ dependencies {
 
     // PDF text extraction (rendering uses built-in android.graphics.pdf.PdfRenderer)
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+
+    // On-device OCR for images (Korean model includes Latin script)
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
