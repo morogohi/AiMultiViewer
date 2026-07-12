@@ -10,6 +10,8 @@
 
 - [사용자 가이드](docs/USER_GUIDE.md) — 설치, 문서 열기, AI 기능, 클라우드 설정, FAQ
 - [개발 문서](docs/DEVELOPMENT.md) — 개발 환경, 아키텍처, 빌드/서명/CI/CD, 포맷 확장
+- [개발·테스트 결과 보고서](docs/TEST_REPORT.md) — v0.2.0~v0.3.0 개발 내용과 검증 결과
+- [인수인계 문서](docs/HANDOVER.md) — 상세 아키텍처, 파서 원리, 배포 절차, 트러블슈팅
 
 ## 지원 문서
 
