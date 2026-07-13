@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aimultiviewer.domain.model.DocFormat
 import com.aimultiviewer.ui.components.MarkdownText
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -127,7 +128,11 @@ private fun DocumentContentView(state: ViewerUiState) {
                 )
 
             content.blocks != null ->
-                StructuredDocView(blocks = content.blocks, modifier = Modifier.fillMaxSize())
+                StructuredDocView(
+                    blocks = content.blocks,
+                    modifier = Modifier.fillMaxSize(),
+                    pageStyle = state.document?.format in setOf(DocFormat.HWP, DocFormat.HWPX)
+                )
 
             else -> Text(
                 text = content.plainText.ifBlank { "표시할 텍스트가 없습니다." },

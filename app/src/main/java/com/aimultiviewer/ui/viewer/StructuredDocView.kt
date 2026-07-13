@@ -1,12 +1,16 @@
 package com.aimultiviewer.ui.viewer
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -14,28 +18,124 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aimultiviewer.domain.model.DocBlock
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * 구조화 블록(제목/문단/표) 렌더러.
- * 표는 열 너비를 내용 길이에 맞춰 계산한 그리드로, 가로 스크롤을 지원한다.
+ * 구조화 블록(제목/문단/표/이미지) 렌더러.
+ * [pageStyle]이면 상용 뷰어처럼 회색 배경 위 흰색 종이(페이지) 카드에 그린다.
+ * 서식 문단(RichPara)은 글자 크기/굵기/기울임/색/정렬을 원본대로 반영한다.
  */
 @Composable
-fun StructuredDocView(blocks: List<DocBlock>, modifier: Modifier = Modifier) {
-    LazyColumn(modifier = modifier, contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
-        items(blocks.size) { i ->
-            when (val b = blocks[i]) {
-                is DocBlock.Heading -> HeadingBlock(b)
-                is DocBlock.Para -> ParaBlock(b)
-                is DocBlock.Table -> TableBlock(b)
-                is DocBlock.Note -> NoteBlock(b)
+fun StructuredDocView(
+    blocks: List<DocBlock>,
+    modifier: Modifier = Modifier,
+    pageStyle: Boolean = false
+) {
+    if (pageStyle) {
+        LazyColumn(
+            modifier = modifier.background(Color(0xFFE8EAED)),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp)
+        ) {
+            items(blocks.size) { i ->
+                // 흰 종이가 이어져 보이도록 블록마다 흰 배경 + 좌우 여백
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(Color.White)
+                        .padding(horizontal = 22.dp)
+                        .padding(
+                            top = if (i == 0) 30.dp else 0.dp,
+                            bottom = if (i == blocks.size - 1) 30.dp else 0.dp
+                        )
+                ) {
+                    RenderBlock(blocks[i])
+                }
             }
         }
+    } else {
+        LazyColumn(modifier = modifier, contentPadding = PaddingValues(12.dp)) {
+            items(blocks.size) { i -> RenderBlock(blocks[i]) }
+        }
+    }
+}
+
+@Composable
+private fun RenderBlock(b: DocBlock) {
+    when (b) {
+        is DocBlock.Heading -> HeadingBlock(b)
+        is DocBlock.Para -> ParaBlock(b)
+        is DocBlock.RichPara -> RichParaBlock(b)
+        is DocBlock.Table -> TableBlock(b)
+        is DocBlock.Image -> ImageBlock(b)
+        is DocBlock.Note -> NoteBlock(b)
+    }
+}
+
+@Composable
+private fun RichParaBlock(b: DocBlock.RichPara) {
+    val annotated = buildAnnotatedString {
+        for (run in b.runs) {
+            pushStyle(
+                SpanStyle(
+                    fontSize = run.sizePt?.sp ?: 12.sp,
+                    fontWeight = if (run.bold) FontWeight.Bold else FontWeight.Normal,
+                    fontStyle = if (run.italic) FontStyle.Italic else FontStyle.Normal,
+                    color = run.colorRgb?.let { Color(0xFF000000L or it.toLong()) }
+                        ?: Color(0xFF1F1F1F)
+                )
+            )
+            append(run.text)
+            pop()
+        }
+    }
+    val maxPt = b.runs.mapNotNull { it.sizePt }.maxOrNull() ?: 12f
+    Text(
+        text = annotated,
+        textAlign = when (b.align) {
+            2 -> TextAlign.End
+            3 -> TextAlign.Center
+            0 -> TextAlign.Justify
+            else -> TextAlign.Start
+        },
+        lineHeight = (maxPt * 1.55f).sp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = (maxPt * 0.18f).dp)
+    )
+}
+
+@Composable
+private fun ImageBlock(b: DocBlock.Image) {
+    val bitmap by produceState<android.graphics.Bitmap?>(null, b.path) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { BitmapFactory.decodeFile(b.path) }.getOrNull()
+        }
+    }
+    bitmap?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = null,
+            contentScale = ContentScale.FillWidth,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        )
     }
 }
 
