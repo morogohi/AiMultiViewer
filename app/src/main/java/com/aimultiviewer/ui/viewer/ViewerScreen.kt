@@ -117,6 +117,9 @@ private fun DocumentContentView(state: ViewerUiState) {
             content.renderableUri != null ->
                 PdfViewer(uriString = content.renderableUri, modifier = Modifier.fillMaxSize())
 
+            content.slideDeck != null ->
+                SlideDeckViewer(deck = content.slideDeck, modifier = Modifier.fillMaxSize())
+
             content.isMarkdown ->
                 MarkdownText(
                     markdown = content.plainText,

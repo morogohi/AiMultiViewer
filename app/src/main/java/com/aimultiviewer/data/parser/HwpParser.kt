@@ -59,25 +59,120 @@ class HwpParser : DocumentParser {
             return DocumentContent(plainText = "", warning = "배포용(DRM) HWP 문서는 지원하지 않습니다.")
         }
 
-        val paragraphs = mutableListOf<String>()
+        val blocks = mutableListOf<DocBlock>()
         for (sectionName in cfb.streamsUnder("BodyText").sortedBy {
             it.removePrefix("Section").toIntOrNull() ?: 0
         }) {
             val raw = cfb.readStream("BodyText", sectionName) ?: continue
             val data = if (compressed) inflateRaw(raw) else raw
-            parseRecords(data) { tag, payload ->
-                if (tag == HWPTAG_PARA_TEXT) {
-                    val t = decodeParaText(payload)
-                    if (t.isNotBlank()) paragraphs.add(t.trim('\n'))
-                }
-            }
+            blocks.addAll(parseSection(data))
         }
-        if (paragraphs.isEmpty()) {
+        if (blocks.isEmpty()) {
             return DocumentContent(plainText = "", warning = "본문 텍스트를 찾지 못했습니다.")
         }
-        val blocks = paragraphs.flatMap { p -> p.split('\n') }
-            .map { DocBlock.Para(it) as DocBlock }
         return DocumentContent(plainText = blocks.toPlainText(), blocks = blocks)
+    }
+
+    /**
+     * 섹션 레코드를 순회하며 문단/표 구조를 복원한다.
+     * - CTRL_HEADER('tbl ') → TABLE(행×열) → LIST_HEADER(셀 주소) → 하위 PARA_TEXT를 셀에 배치
+     * - 머리말/꼬리말/각주(head/foot/fn/en) 하위 문단은 본문에서 제외
+     */
+    private fun parseSection(data: ByteArray): List<DocBlock> {
+        val blocks = mutableListOf<DocBlock>()
+
+        var table: Array<Array<StringBuilder>>? = null
+        var tableCtrlLevel = -1
+        var cellRow = -1
+        var cellCol = -1
+        var cellSeq = 0
+        var pendingTableLevel = -1
+        var skipCtrlLevel = -1     // head/foot 등 제외 대상 컨트롤의 레벨
+
+        fun flushTable() {
+            val t = table ?: return
+            val rows = t.map { r -> r.map { it.toString().trim() } }
+            val compact = compactTable(rows)
+            if (compact.isNotEmpty()) blocks.add(DocBlock.Table(compact))
+            table = null
+            tableCtrlLevel = -1
+            cellRow = -1; cellCol = -1; cellSeq = 0
+        }
+
+        parseRecords(data) { tag, level, payload ->
+            // 제외 컨트롤(머리말 등) 종료 감지
+            if (skipCtrlLevel >= 0 && level <= skipCtrlLevel) skipCtrlLevel = -1
+
+            when (tag) {
+                HWPTAG_CTRL_HEADER -> {
+                    if (payload.size >= 4) {
+                        val ctrlId = ByteBuffer.wrap(payload, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                        when (ctrlId) {
+                            CTRL_TBL -> {
+                                flushTable()
+                                pendingTableLevel = level
+                            }
+                            in EXCLUDED_CTRLS -> if (skipCtrlLevel < 0) skipCtrlLevel = level
+                            else -> if (table != null && level <= tableCtrlLevel) flushTable()
+                        }
+                    }
+                }
+                HWPTAG_TABLE -> if (pendingTableLevel >= 0 && payload.size >= 8) {
+                    val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+                    val rows = bb.getShort(4).toInt() and 0xFFFF
+                    val cols = bb.getShort(6).toInt() and 0xFFFF
+                    if (rows in 1..500 && cols in 1..64) {
+                        table = Array(rows) { Array(cols) { StringBuilder() } }
+                        tableCtrlLevel = pendingTableLevel
+                    }
+                    pendingTableLevel = -1
+                }
+                HWPTAG_LIST_HEADER -> {
+                    val t = table
+                    if (t != null && level > tableCtrlLevel && payload.size >= 12) {
+                        val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+                        val col = bb.getShort(8).toInt() and 0xFFFF
+                        val row = bb.getShort(10).toInt() and 0xFFFF
+                        if (row < t.size && col < t[0].size) {
+                            cellRow = row; cellCol = col
+                        } else {
+                            cellRow = (cellSeq / t[0].size).coerceAtMost(t.size - 1)
+                            cellCol = cellSeq % t[0].size
+                        }
+                        cellSeq++
+                    }
+                }
+                HWPTAG_PARA_TEXT -> {
+                    if (skipCtrlLevel >= 0 && level > skipCtrlLevel) return@parseRecords
+                    val text = decodeParaText(payload).trim('\n').trim()
+                    if (text.isEmpty()) return@parseRecords
+                    val t = table
+                    if (t != null && cellRow >= 0 && level > tableCtrlLevel) {
+                        val sb = t[cellRow][cellCol]
+                        if (sb.isNotEmpty()) sb.append('\n')
+                        sb.append(text)
+                    } else {
+                        if (t != null) flushTable()
+                        text.split('\n').forEach { line ->
+                            if (line.isNotBlank()) blocks.add(DocBlock.Para(line.trim()))
+                        }
+                    }
+                }
+                HWPTAG_PARA_HEADER -> if (table != null && level <= tableCtrlLevel) flushTable()
+            }
+        }
+        flushTable()
+        return blocks
+    }
+
+    /** 병합으로 비어 있는 행/열을 제거해 읽기 좋은 표로 압축 */
+    private fun compactTable(rows: List<List<String>>): List<List<String>> {
+        if (rows.isEmpty()) return rows
+        val keptRows = rows.filter { r -> r.any { it.isNotBlank() } }
+        if (keptRows.isEmpty()) return emptyList()
+        val colCount = keptRows[0].size
+        val keptCols = (0 until colCount).filter { c -> keptRows.any { it[c].isNotBlank() } }
+        return keptRows.map { r -> keptCols.map { r[it] } }
     }
 
     private fun inflateRaw(data: ByteArray): ByteArray {
@@ -94,11 +189,15 @@ class HwpParser : DocumentParser {
         return out.toByteArray()
     }
 
-    private inline fun parseRecords(data: ByteArray, onRecord: (tag: Int, payload: ByteArray) -> Unit) {
+    private inline fun parseRecords(
+        data: ByteArray,
+        onRecord: (tag: Int, level: Int, payload: ByteArray) -> Unit
+    ) {
         val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
         while (bb.remaining() >= 4) {
             val hdr = bb.int
             val tag = hdr and 0x3FF
+            val level = (hdr ushr 10) and 0x3FF
             var size = (hdr ushr 20) and 0xFFF
             if (size == 0xFFF) {
                 if (bb.remaining() < 4) break
@@ -107,7 +206,7 @@ class HwpParser : DocumentParser {
             if (size < 0 || size > bb.remaining()) break
             val payload = ByteArray(size)
             bb.get(payload)
-            onRecord(tag, payload)
+            onRecord(tag, level, payload)
         }
     }
 
@@ -136,7 +235,25 @@ class HwpParser : DocumentParser {
     }
 
     companion object {
+        private const val HWPTAG_PARA_HEADER = 66
         private const val HWPTAG_PARA_TEXT = 67
+        private const val HWPTAG_CTRL_HEADER = 71
+        private const val HWPTAG_LIST_HEADER = 72
+        private const val HWPTAG_TABLE = 77
+
+        private fun ctrlId(a: Char, b: Char, c: Char, d: Char) =
+            (a.code shl 24) or (b.code shl 16) or (c.code shl 8) or d.code
+
+        private val CTRL_TBL = ctrlId('t', 'b', 'l', ' ')
+
+        /** 머리말/꼬리말/각주/미주 — 본문에서 제외 */
+        private val EXCLUDED_CTRLS = setOf(
+            ctrlId('h', 'e', 'a', 'd'),
+            ctrlId('f', 'o', 'o', 't'),
+            ctrlId('f', 'n', ' ', ' '),
+            ctrlId('e', 'n', ' ', ' ')
+        )
+
         private val EXTENDED_CTRL = setOf(1, 2, 3, 11, 12, 14, 15, 16, 17, 18, 21, 22, 23)
         private val INLINE_CTRL = setOf(4, 5, 6, 7, 8, 9, 19, 20)
     }

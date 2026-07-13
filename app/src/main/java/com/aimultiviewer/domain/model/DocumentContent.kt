@@ -14,5 +14,7 @@ data class DocumentContent(
     val pageCount: Int = 0,
     val warning: String? = null,
     /** 구조화 블록(제목/문단/표). 있으면 뷰어가 구조화 렌더링을 사용한다. */
-    val blocks: List<DocBlock>? = null
+    val blocks: List<DocBlock>? = null,
+    /** PPTX 시각 레이아웃 덱. 있으면 뷰어가 슬라이드 캔버스 렌더링을 사용한다. */
+    val slideDeck: SlideDeck? = null
 )
