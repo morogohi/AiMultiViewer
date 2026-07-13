@@ -18,9 +18,10 @@ object ParserRegistry {
         XlsxParser(),
         OdfParser(),
         HwpxParser(),
+        HwpParser(),
         GoogleDocParser(),
         ImageParser(),
-        // 구 바이너리 포맷은 후속 마일스톤에서 네이티브 파서로 대체
+        // DOC(구 바이너리)은 후속 마일스톤에서 네이티브 파서로 대체
         UnsupportedBinaryParser()
     )
 

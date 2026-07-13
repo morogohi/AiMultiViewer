@@ -123,6 +123,9 @@ private fun DocumentContentView(state: ViewerUiState) {
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
                 )
 
+            content.blocks != null ->
+                StructuredDocView(blocks = content.blocks, modifier = Modifier.fillMaxSize())
+
             else -> Text(
                 text = content.plainText.ifBlank { "표시할 텍스트가 없습니다." },
                 style = MaterialTheme.typography.bodyMedium,

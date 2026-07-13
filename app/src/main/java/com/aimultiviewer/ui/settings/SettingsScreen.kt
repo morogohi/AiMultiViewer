@@ -129,7 +129,7 @@ fun SettingsScreen(
             ) { Text(if (saved) "저장됨 ✓" else "저장") }
 
             Text(
-                "지원 문서: HWPX · DOCX · PPTX · XLSX · PDF · ODF · 이미지(OCR) · Google 문서 · TXT · Markdown",
+                "지원 문서: HWP · HWPX · DOCX · PPTX · XLSX · PDF · ODF · 이미지(OCR) · Google 문서 · TXT · Markdown",
                 style = MaterialTheme.typography.bodySmall
             )
         }

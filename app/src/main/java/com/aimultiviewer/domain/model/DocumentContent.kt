@@ -12,5 +12,7 @@ data class DocumentContent(
     /** 이미지 문서인 경우 원본 이미지 Uri (plainText에는 OCR 결과가 담김) */
     val renderableImageUri: String? = null,
     val pageCount: Int = 0,
-    val warning: String? = null
+    val warning: String? = null,
+    /** 구조화 블록(제목/문단/표). 있으면 뷰어가 구조화 렌더링을 사용한다. */
+    val blocks: List<DocBlock>? = null
 )
