@@ -31,13 +31,30 @@ $tmp = Join-Path $env:TEMP ("llm-wiki-pull-" + [Guid]::NewGuid().ToString('N').S
 if (-not (Test-Path $tmp)) { Write-Output '기기에 수집된 문서가 없습니다.'; exit 0 }
 
 New-Item -ItemType Directory -Force $VaultInbox | Out-Null
+
+# 같은 문서의 "이름 (N).md" 중복본은 최신 것 하나만 기본 이름으로 반영
+$groups = Get-ChildItem $tmp -Filter *.md | Group-Object {
+    $_.Name -replace ' \(\d+\)\.md$', '.md'
+}
 $pulled = 0
-Get-ChildItem $tmp -Filter *.md | ForEach-Object {
-    Move-Item -Force $_.FullName (Join-Path $VaultInbox $_.Name)
+foreach ($g in $groups) {
+    $newest = $g.Group | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    Move-Item -Force $newest.FullName (Join-Path $VaultInbox $g.Name)
     $pulled++
-    Write-Output ("  + " + $_.Name)
+    Write-Output ("  + " + $g.Name)
 }
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+
+# 볼트 inbox에 남아 있을 수 있는 과거 "(N)" 중복본 정리 (최신본은 기본 이름으로 유지)
+Get-ChildItem $VaultInbox -Filter '* (*).md' | ForEach-Object {
+    $base = $_.Name -replace ' \(\d+\)\.md$', '.md'
+    $basePath = Join-Path $VaultInbox $base
+    if ((Test-Path $basePath) -and ((Get-Item $basePath).LastWriteTime -ge $_.LastWriteTime)) {
+        Remove-Item $_.FullName
+    } else {
+        Move-Item -Force $_.FullName $basePath
+    }
+}
 
 Write-Output ("수집 완료: {0}개 문서 → {1}" -f $pulled, $VaultInbox)
 Write-Output 'Obsidian에서 inbox/aimultiviewer/ 를 확인하세요.'

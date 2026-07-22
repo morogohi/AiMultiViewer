@@ -3,6 +3,7 @@ package com.aimultiviewer.data.wiki
 import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Context
+import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.aimultiviewer.data.ai.Summarizer
@@ -98,8 +99,20 @@ class WikiExporter(private val context: Context) {
     private fun writeViaMediaStore(fileName: String, bytes: ByteArray): String? {
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri("external")
+        val prefs = context.getSharedPreferences("wiki_export_uris", Context.MODE_PRIVATE)
 
-        // 이미 내보낸 파일이면 갱신 (같은 문서 재열람 시 중복 방지)
+        // 1) 이전에 이 문서로 만든 URI가 있으면 그대로 덮어쓴다.
+        //    (MediaStore는 앱 재설치 시 타 소유 파일을 숨기므로 이름 조회만으로는
+        //     중복 "(N).md" 파일이 생긴다 → URI를 기억해 재사용)
+        prefs.getString(fileName, null)?.let { saved ->
+            val ok = runCatching {
+                resolver.openOutputStream(Uri.parse(saved), "wt")?.use { it.write(bytes) } != null
+            }.getOrDefault(false)
+            if (ok) return RELATIVE_DIR + fileName
+            prefs.edit().remove(fileName).apply()   // 행이 사라졌으면 새로 생성
+        }
+
+        // 2) 이 앱 소유의 동명 파일 조회 (같은 설치에서 URI 캐시가 유실된 경우)
         val existing = resolver.query(
             collection,
             arrayOf(MediaStore.MediaColumns._ID),
@@ -110,6 +123,8 @@ class WikiExporter(private val context: Context) {
             if (c.moveToFirst()) ContentUris.withAppendedId(collection, c.getLong(0)) else null
         }
 
+        // 3) 없으면 새로 만든다. (기존 파일과 이름이 겹치면 시스템이 "(N)" 붙여 생성 —
+        //    이후에는 저장된 URI로 항상 같은 파일을 갱신하므로 더는 늘어나지 않음)
         val uri = existing ?: resolver.insert(collection, ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, "text/markdown")
@@ -117,6 +132,7 @@ class WikiExporter(private val context: Context) {
         }) ?: return null
 
         resolver.openOutputStream(uri, "wt")?.use { it.write(bytes) } ?: return null
+        prefs.edit().putString(fileName, uri.toString()).apply()
         return RELATIVE_DIR + fileName
     }
 }
