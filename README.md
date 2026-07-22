@@ -2,6 +2,8 @@
 
 여러 문서 포맷을 한 앱에서 보고, AI로 요약·질의응답·비교·회의록 생성·기술분석을 수행하는 안드로이드 앱입니다.
 
+**🌐 서비스 소개 페이지: <https://morogohi.github.io/AiMultiViewer/>**
+
 ## 설치 (일반 사용자)
 
 [Releases](../../releases) 페이지에서 최신 `app-release.apk`를 내려받아 설치하세요. (Android 8.0 이상)
