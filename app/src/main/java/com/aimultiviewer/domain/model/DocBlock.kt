@@ -11,18 +11,26 @@ sealed interface DocBlock {
     data class Para(val text: String, val bullet: Boolean = false) : DocBlock
 
     /**
-     * 서식(글자 크기/굵기/기울임/색)과 정렬을 보존한 문단.
+     * 서식(글자 크기/굵기/기울임/색/밑줄)과 정렬을 보존한 문단.
      * align: 0=양쪽, 1=왼쪽, 2=오른쪽, 3=가운데
+     * spacing: 문단 뒤 간격 배수 (1.0 = 기본)
      */
-    data class RichPara(val runs: List<RichRun>, val align: Int = 1) : DocBlock {
+    data class RichPara(
+        val runs: List<RichRun>,
+        val align: Int = 1,
+        val spacing: Float = 1f
+    ) : DocBlock {
         val text: String get() = runs.joinToString("") { it.text }
     }
 
     /** 표. rows[행][열] */
     data class Table(val rows: List<List<String>>) : DocBlock
 
-    /** 본문 삽입 이미지 (캐시로 추출된 파일 경로) */
-    data class Image(val path: String) : DocBlock
+    /**
+     * 본문 삽입 이미지 (캐시로 추출된 파일 경로).
+     * [widthFraction]은 페이지 폭 대비 비율(0..1). null이면 전체 폭.
+     */
+    data class Image(val path: String, val widthFraction: Float? = null) : DocBlock
 
     /** 부가 정보(발표자 노트, 잘림 안내 등) */
     data class Note(val text: String) : DocBlock
@@ -36,7 +44,8 @@ data class RichRun(
     val bold: Boolean = false,
     val italic: Boolean = false,
     /** 0xRRGGBB. null이면 기본 색 */
-    val colorRgb: Int? = null
+    val colorRgb: Int? = null,
+    val underline: Boolean = false
 )
 
 /** AI/위키 수집용 평문 변환 */

@@ -30,6 +30,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aimultiviewer.domain.model.DocBlock
@@ -96,6 +97,7 @@ private fun RichParaBlock(b: DocBlock.RichPara) {
                     fontSize = run.sizePt?.sp ?: 12.sp,
                     fontWeight = if (run.bold) FontWeight.Bold else FontWeight.Normal,
                     fontStyle = if (run.italic) FontStyle.Italic else FontStyle.Normal,
+                    textDecoration = if (run.underline) TextDecoration.Underline else TextDecoration.None,
                     color = run.colorRgb?.let { Color(0xFF000000L or it.toLong()) }
                         ?: Color(0xFF1F1F1F)
                 )
@@ -113,10 +115,10 @@ private fun RichParaBlock(b: DocBlock.RichPara) {
             0 -> TextAlign.Justify
             else -> TextAlign.Start
         },
-        lineHeight = (maxPt * 1.55f).sp,
+        lineHeight = (maxPt * 1.55f * b.spacing.coerceIn(0.8f, 2f)).sp,
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = (maxPt * 0.18f).dp)
+            .padding(vertical = (maxPt * 0.18f * b.spacing).dp)
     )
 }
 
@@ -128,12 +130,13 @@ private fun ImageBlock(b: DocBlock.Image) {
         }
     }
     bitmap?.let {
+        val frac = (b.widthFraction ?: 1f).coerceIn(0.2f, 1f)
         Image(
             bitmap = it.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.FillWidth,
             modifier = Modifier
-                .fillMaxWidth()
+                .fillMaxWidth(frac)
                 .padding(vertical = 8.dp)
         )
     }
@@ -183,6 +186,7 @@ private fun TableBlock(b: DocBlock.Table) {
     val colWidths = remember(b) { computeColumnWidths(b.rows) }
     val borderColor = MaterialTheme.colorScheme.outlineVariant
     val headerBg = MaterialTheme.colorScheme.surfaceVariant
+    val labelBg = Color(0xFFE8F4F8)
 
     Column(
         modifier = Modifier
@@ -194,21 +198,27 @@ private fun TableBlock(b: DocBlock.Table) {
             Row {
                 for (c in colWidths.indices) {
                     val cell = row.getOrNull(c) ?: ""
+                    val isHeaderRow = rowIdx == 0
+                    val isLabelCol = c == 0 && colWidths.size >= 2 && cell.length <= 12
                     Box(
                         modifier = Modifier
                             .width(colWidths[c].dp)
                             .then(
-                                if (rowIdx == 0) Modifier.background(headerBg) else Modifier
+                                when {
+                                    isHeaderRow -> Modifier.background(headerBg)
+                                    isLabelCol -> Modifier.background(labelBg)
+                                    else -> Modifier
+                                }
                             )
                             .border(0.5.dp, borderColor)
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .padding(horizontal = 8.dp, vertical = 6.dp)
                     ) {
                         Text(
                             text = cell,
                             style = MaterialTheme.typography.bodySmall,
                             fontSize = 12.sp,
-                            fontWeight = if (rowIdx == 0) FontWeight.SemiBold else FontWeight.Normal,
-                            maxLines = 6
+                            fontWeight = if (isHeaderRow || isLabelCol) FontWeight.SemiBold else FontWeight.Normal,
+                            maxLines = 8
                         )
                     }
                 }
@@ -217,7 +227,7 @@ private fun TableBlock(b: DocBlock.Table) {
     }
 }
 
-/** 열 너비(dp): 열의 최장 내용 기준 60~240dp, 한글은 글자당 더 넓게 */
+/** 열 너비(dp): 한글 2배 가중, 최소 폭을 넓혀 양식 표가 세로로 깨지지 않게 */
 private fun computeColumnWidths(rows: List<List<String>>): List<Int> {
     val colCount = rows.maxOf { it.size }
     return List(colCount) { c ->
@@ -229,6 +239,7 @@ private fun computeColumnWidths(rows: List<List<String>>): List<Int> {
                 if (units > maxUnits) maxUnits = units
             }
         }
-        (maxUnits * 7 + 14).coerceIn(56, 240)
+        val minW = if (c == 0 && colCount >= 2) 88 else 72
+        (maxUnits * 8 + 20).coerceIn(minW, 280)
     }
 }

@@ -16,13 +16,17 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.AnnotatedString
@@ -40,8 +44,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /**
- * PPTX 슬라이드를 원본 위치/크기/서식 그대로 재현하는 캔버스 뷰어.
- * 각 슬라이드는 원본 종횡비의 흰색 카드로 그려지고 도형은 비율 좌표로 배치된다.
+ * PPTX 슬라이드를 원본 위치/크기/서식/배경/도형 채우기까지 재현하는 캔버스 뷰어.
  */
 @Composable
 fun SlideDeckViewer(deck: SlideDeck, modifier: Modifier = Modifier) {
@@ -79,39 +82,72 @@ fun SlideDeckViewer(deck: SlideDeck, modifier: Modifier = Modifier) {
 @Composable
 private fun SlideCanvas(deck: SlideDeck, index: Int) {
     val slide = deck.slides[index]
+    val bg = slide.backgroundRgb?.let { Color(0xFF000000L or it.toLong()) } ?: Color.White
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
             .aspectRatio(deck.aspectRatio)
-            .background(Color.White)
+            .background(bg)
             .border(1.dp, Color(0xFFDADCE0))
     ) {
         val cardW = maxWidth
         val cardH = maxHeight
-        // 글꼴 스케일: 슬라이드 pt 크기 → 화면 dp 크기
         val fontScale = cardW.value / deck.widthPt
 
-        for (el in slide.elements) {
+        // 도형 → 이미지 → 표 → 텍스트 순으로 겹침 (텍스트가 최상단)
+        val ordered = slide.elements.sortedBy {
+            when (it) {
+                is SlideElement.Shape -> 0
+                is SlideElement.Picture -> 1
+                is SlideElement.TableBox -> 2
+                is SlideElement.TextBox -> 3
+            }
+        }
+
+        for (el in ordered) {
             val x = cardW * el.x
             val y = cardH * el.y
-            val w = cardW * el.w.coerceAtLeast(0.01f)
-            val h = cardH * el.h.coerceAtLeast(0.01f)
+            val w = cardW * el.w.coerceAtLeast(0.005f)
+            val h = cardH * el.h.coerceAtLeast(0.005f)
+            val boxMod = Modifier.offset(x, y).size(w, h)
             when (el) {
-                is SlideElement.Picture -> SlidePicture(
-                    path = el.path,
-                    modifier = Modifier.offset(x, y).size(w, h)
-                )
-                is SlideElement.TextBox -> Column(Modifier.offset(x, y).size(w, h)) {
-                    el.paragraphs.forEach { p -> SlideParaText(p, fontScale) }
+                is SlideElement.Shape -> ShapeBox(el, boxMod)
+                is SlideElement.Picture -> SlidePicture(el.path, boxMod)
+                is SlideElement.TextBox -> {
+                    val fill = el.fillRgb?.let { Color(0xFF000000L or it.toLong()) }
+                    Column(
+                        boxMod.then(
+                            if (fill != null) Modifier.background(fill) else Modifier
+                        ).padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        el.paragraphs.forEach { p -> SlideParaText(p, fontScale) }
+                    }
                 }
-                is SlideElement.TableBox -> SlideTable(
-                    rows = el.rows,
-                    fontScale = fontScale,
-                    modifier = Modifier.offset(x, y).size(w, h)
-                )
+                is SlideElement.TableBox -> SlideTable(el.rows, fontScale, boxMod)
             }
         }
     }
+}
+
+@Composable
+private fun ShapeBox(el: SlideElement.Shape, modifier: Modifier) {
+    val fill = el.fillRgb?.let { Color(0xFF000000L or it.toLong()) } ?: Color.Transparent
+    val stroke = el.strokeRgb?.let { Color(0xFF000000L or it.toLong()) }
+    val shape = when (el.kind) {
+        SlideElement.Shape.Kind.ELLIPSE -> CircleShape
+        SlideElement.Shape.Kind.ROUND_RECT -> RoundedCornerShape(12)
+        SlideElement.Shape.Kind.RECT -> RectangleShape
+    }
+    Box(
+        modifier
+            .clip(shape)
+            .background(fill)
+            .then(
+                if (stroke != null && el.strokePt > 0f)
+                    Modifier.border(el.strokePt.dp.coerceAtLeast(0.5.dp), stroke, shape)
+                else Modifier
+            )
+    )
 }
 
 @Composable
@@ -160,7 +196,7 @@ private fun SlidePicture(path: String, modifier: Modifier) {
             bitmap = it.asImageBitmap(),
             contentDescription = null,
             modifier = modifier,
-            contentScale = ContentScale.Fit
+            contentScale = ContentScale.FillBounds
         )
     }
 }

@@ -18,7 +18,9 @@ data class SlideDeck(
 data class Slide(
     val number: Int,
     val elements: List<SlideElement>,
-    val note: String? = null
+    val note: String? = null,
+    /** 0xRRGGBB. null이면 흰색 */
+    val backgroundRgb: Int? = null
 )
 
 sealed interface SlideElement {
@@ -30,7 +32,9 @@ sealed interface SlideElement {
     data class TextBox(
         override val x: Float, override val y: Float,
         override val w: Float, override val h: Float,
-        val paragraphs: List<SlidePara>
+        val paragraphs: List<SlidePara>,
+        /** 도형 배경색 (텍스트 박스에 채워진 경우) */
+        val fillRgb: Int? = null
     ) : SlideElement
 
     data class Picture(
@@ -45,6 +49,18 @@ sealed interface SlideElement {
         override val w: Float, override val h: Float,
         val rows: List<List<String>>
     ) : SlideElement
+
+    /** 장식용 도형(사각형/원/둥근사각) — 텍스트 없는 디자인 요소 */
+    data class Shape(
+        override val x: Float, override val y: Float,
+        override val w: Float, override val h: Float,
+        val kind: Kind = Kind.RECT,
+        val fillRgb: Int? = null,
+        val strokeRgb: Int? = null,
+        val strokePt: Float = 0f
+    ) : SlideElement {
+        enum class Kind { RECT, ELLIPSE, ROUND_RECT }
+    }
 }
 
 data class SlidePara(

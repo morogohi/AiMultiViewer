@@ -14,25 +14,29 @@ import com.aimultiviewer.domain.model.toPlainText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
  * PPTX = ZIP(OOXML PresentationML).
- * 슬라이드의 도형 위치/크기(xfrm), 텍스트 서식(크기/굵기/색), 이미지, 표를 추출해
- * 시각적 슬라이드 캔버스 모델(SlideDeck)을 만든다.
- * plainText/blocks 도 함께 산출해 AI·위키 기능이 그대로 동작하게 한다.
+ * 테마 색·슬라이드/레이아웃/마스터 배경·도형 채우기·텍스트 서식·이미지·표를 추출해
+ * 원본에 가까운 슬라이드 캔버스(SlideDeck)를 만든다.
  */
 class PptxParser : DocumentParser {
     override fun supports(format: DocFormat) = format == DocFormat.PPTX
 
     private val slideRegex = Regex("""ppt/slides/slide(\d+)\.xml""")
-    private val relsRegex = Regex("""ppt/slides/_rels/slide(\d+)\.xml\.rels""")
+    private val slideRelsRegex = Regex("""ppt/slides/_rels/slide(\d+)\.xml\.rels""")
     private val notesRegex = Regex("""ppt/notesSlides/notesSlide(\d+)\.xml""")
 
     override suspend fun parse(context: Context, uri: Uri, format: DocFormat): DocumentContent =
         withContext(Dispatchers.IO) {
             val entries = ZipUtils.readEntries(context, uri) { name ->
                 name == "ppt/presentation.xml" ||
-                    slideRegex.matches(name) || relsRegex.matches(name) ||
+                    name == "ppt/_rels/presentation.xml.rels" ||
+                    name.startsWith("ppt/theme/") ||
+                    name.startsWith("ppt/slideLayouts/") ||
+                    name.startsWith("ppt/slideMasters/") ||
+                    slideRegex.matches(name) || slideRelsRegex.matches(name) ||
                     notesRegex.matches(name) ||
                     (name.startsWith("ppt/media/") && !name.endsWith(".emf") && !name.endsWith(".wmf"))
             }
@@ -44,7 +48,6 @@ class PptxParser : DocumentParser {
                 )
             }
 
-            // 슬라이드 크기
             var slideW = 12192000L
             var slideH = 6858000L
             entries["ppt/presentation.xml"]?.let { bytes ->
@@ -54,10 +57,10 @@ class PptxParser : DocumentParser {
                 }
             }
 
-            // 참조 이미지 캐시 추출
+            val theme = loadTheme(entries)
             val mediaDir = File(context.cacheDir, "pptx_media/${uri.toString().hashCode()}")
             mediaDir.mkdirs()
-            val mediaPaths = mutableMapOf<String, String>()   // zip 경로 → 캐시 파일 경로
+            val mediaPaths = mutableMapOf<String, String>()
             fun mediaPath(zipName: String): String? {
                 mediaPaths[zipName]?.let { return it }
                 val bytes = entries[zipName] ?: return null
@@ -75,21 +78,45 @@ class PptxParser : DocumentParser {
                         ?.findAll("t")?.joinToString(" ") { it.allText() }?.trim() ?: ""
                 }
 
+            // slideN → layout zip path (rels)
+            val layoutCache = mutableMapOf<String, XmlNode?>()
+            val masterCache = mutableMapOf<String, XmlNode?>()
+            fun loadXml(path: String): XmlNode? =
+                entries[path]?.let { XmlDom.parse(it.toString(Charsets.UTF_8)) }
+
             val slides = mutableListOf<Slide>()
             val blocks = mutableListOf<DocBlock>()
             for ((name, bytes) in slideEntries.toList()
                 .sortedBy { (n, _) -> slideRegex.find(n)!!.groupValues[1].toInt() }) {
                 val no = slideRegex.find(name)!!.groupValues[1].toInt()
-                val rels = parseRels(entries["ppt/slides/_rels/slide$no.xml.rels"])
+                val rels = parseRels(entries["ppt/slides/_rels/slide$no.xml.rels"], "ppt/slides/")
                 val root = XmlDom.parse(bytes.toString(Charsets.UTF_8)) ?: continue
                 val spTree = root.find("spTree") ?: continue
 
-                val elements = mutableListOf<SlideElement>()
-                parseShapeTree(spTree, slideW, slideH, rels, ::mediaPath, elements, null)
-                val note = notes[no]?.takeIf { it.isNotBlank() }
-                slides.add(Slide(no, elements, note))
+                val layoutPath = rels.values.firstOrNull {
+                    it.contains("slideLayout") && it.endsWith(".xml")
+                }
+                val layout = layoutPath?.let { p ->
+                    layoutCache.getOrPut(p) { loadXml(p) }
+                }
+                val layoutRels = layoutPath?.let { p ->
+                    val relsName = p.substringBeforeLast('/') + "/_rels/" +
+                        p.substringAfterLast('/') + ".rels"
+                    parseRels(entries[relsName], p.substringBeforeLast('/') + "/")
+                }.orEmpty()
+                val masterPath = layoutRels.values.firstOrNull {
+                    it.contains("slideMaster") && it.endsWith(".xml")
+                }
+                val master = masterPath?.let { p ->
+                    masterCache.getOrPut(p) { loadXml(p) }
+                }
 
-                // 텍스트 블록(AI/위키용)
+                val bg = resolveBackground(root, layout, master, theme)
+                val elements = mutableListOf<SlideElement>()
+                parseShapeTree(spTree, slideW, slideH, rels, theme, ::mediaPath, elements, null)
+                val note = notes[no]?.takeIf { it.isNotBlank() }
+                slides.add(Slide(no, elements, note, bg))
+
                 blocks.add(DocBlock.Heading("슬라이드 $no", 3))
                 elements.forEach { el ->
                     when (el) {
@@ -99,7 +126,7 @@ class PptxParser : DocumentParser {
                         }
                         is SlideElement.TableBox ->
                             if (el.rows.isNotEmpty()) blocks.add(DocBlock.Table(el.rows))
-                        is SlideElement.Picture -> {}
+                        is SlideElement.Picture, is SlideElement.Shape -> {}
                     }
                 }
                 note?.let { blocks.add(DocBlock.Note("[발표자 노트] $it")) }
@@ -112,24 +139,143 @@ class PptxParser : DocumentParser {
             )
         }
 
-    private fun parseRels(bytes: ByteArray?): Map<String, String> {
+    // ---- Theme / colors ----
+
+    private data class Theme(
+        val scheme: Map<String, Int> = emptyMap()
+    ) {
+        fun color(name: String?): Int? = name?.let { scheme[it.lowercase()] }
+    }
+
+    private fun loadTheme(entries: Map<String, ByteArray>): Theme {
+        val themeBytes = entries.entries
+            .firstOrNull { it.key.startsWith("ppt/theme/theme") && it.key.endsWith(".xml") }
+            ?.value ?: return Theme()
+        val root = XmlDom.parse(themeBytes.toString(Charsets.UTF_8)) ?: return Theme()
+        val schemeNode = root.find("clrScheme") ?: return Theme()
+        val map = mutableMapOf<String, Int>()
+        for (child in schemeNode.children) {
+            val rgb = extractColor(child, Theme()) ?: continue
+            map[child.name.lowercase()] = rgb
+        }
+        // 별칭
+        map["tx1"] = map["dk1"] ?: map["tx1"] ?: 0x000000
+        map["tx2"] = map["dk2"] ?: map["tx2"] ?: 0x000000
+        map["bg1"] = map["lt1"] ?: map["bg1"] ?: 0xFFFFFF
+        map["bg2"] = map["lt2"] ?: map["bg2"] ?: 0xFFFFFF
+        return Theme(map)
+    }
+
+    /** 노드 하위(또는 자기)에서 srgbClr / schemeClr / sysClr 색 추출 */
+    private fun extractColor(node: XmlNode?, theme: Theme): Int? {
+        if (node == null) return null
+        node.find("srgbClr")?.let { sc ->
+            sc.attr("val")?.toIntOrNull(16)?.let { return applyLum(it, sc) }
+        }
+        node.find("sysClr")?.let { sc ->
+            sc.attr("lastClr")?.toIntOrNull(16)?.let { return applyLum(it, sc) }
+        }
+        node.find("schemeClr")?.let { sc ->
+            val base = theme.color(sc.attr("val")) ?: return@let
+            return applyLum(base, sc)
+        }
+        for (c in node.children) {
+            extractColor(c, theme)?.let { return it }
+        }
+        return null
+    }
+
+    /** lumMod(%) / lumOff(%) / tint / shade 적용 */
+    private fun applyLum(rgb: Int, node: XmlNode): Int {
+        var r = (rgb shr 16) and 0xFF
+        var g = (rgb shr 8) and 0xFF
+        var b = rgb and 0xFF
+        fun toFloat(v: Int) = v / 255f
+        fun fromFloat(v: Float) = (v.coerceIn(0f, 1f) * 255).roundToInt()
+
+        node.child("lumMod")?.attr("val")?.toIntOrNull()?.let { mod ->
+            val f = mod / 100_000f
+            r = fromFloat(toFloat(r) * f)
+            g = fromFloat(toFloat(g) * f)
+            b = fromFloat(toFloat(b) * f)
+        }
+        node.child("lumOff")?.attr("val")?.toIntOrNull()?.let { off ->
+            val f = off / 100_000f
+            r = fromFloat(toFloat(r) + f)
+            g = fromFloat(toFloat(g) + f)
+            b = fromFloat(toFloat(b) + f)
+        }
+        node.child("tint")?.attr("val")?.toIntOrNull()?.let { t ->
+            val f = t / 100_000f
+            r = fromFloat(toFloat(r) * f + (1 - f))
+            g = fromFloat(toFloat(g) * f + (1 - f))
+            b = fromFloat(toFloat(b) * f + (1 - f))
+        }
+        node.child("shade")?.attr("val")?.toIntOrNull()?.let { s ->
+            val f = s / 100_000f
+            r = fromFloat(toFloat(r) * f)
+            g = fromFloat(toFloat(g) * f)
+            b = fromFloat(toFloat(b) * f)
+        }
+        return (r shl 16) or (g shl 8) or b
+    }
+
+    private fun resolveBackground(
+        slide: XmlNode,
+        layout: XmlNode?,
+        master: XmlNode?,
+        theme: Theme
+    ): Int? {
+        fun from(node: XmlNode?): Int? {
+            val bg = node?.find("bg") ?: return null
+            // bgPr/solidFill or bgRef
+            bg.find("solidFill")?.let { return extractColor(it, theme) }
+            bg.find("bgRef")?.let { ref ->
+                // theme fill style 참조 — 색만 추출 시도
+                return extractColor(ref, theme) ?: theme.color(ref.attr("val"))
+            }
+            bg.find("gradFill")?.let { gf ->
+                // 첫 번째 그라데이션 스탑 색 사용
+                gf.find("gsLst")?.children?.firstOrNull()?.let { return extractColor(it, theme) }
+            }
+            return extractColor(bg, theme)
+        }
+        return from(slide) ?: from(layout) ?: from(master) ?: theme.color("bg1") ?: theme.color("lt1")
+    }
+
+    // ---- Rels / geometry ----
+
+    private fun parseRels(bytes: ByteArray?, baseDir: String): Map<String, String> {
         val root = bytes?.let { XmlDom.parse(it.toString(Charsets.UTF_8)) } ?: return emptyMap()
         return root.findAll("Relationship").mapNotNull { rel ->
             val id = rel.attr("Id") ?: return@mapNotNull null
             val target = rel.attr("Target") ?: return@mapNotNull null
-            id to target.removePrefix("../").let { if (it.startsWith("ppt/")) it else "ppt/$it" }
+            val resolved = when {
+                target.startsWith("/") -> target.removePrefix("/")
+                target.startsWith("../") -> {
+                    // baseDir = ppt/slides/ → ../slideLayouts/x.xml → ppt/slideLayouts/x.xml
+                    val parts = (baseDir.trimEnd('/') + "/" + target).split('/')
+                    val stack = ArrayDeque<String>()
+                    for (p in parts) when (p) {
+                        "", "." -> {}
+                        ".." -> if (stack.isNotEmpty()) stack.removeLast()
+                        else -> stack.addLast(p)
+                    }
+                    stack.joinToString("/")
+                }
+                target.startsWith("ppt/") -> target
+                else -> baseDir.trimEnd('/') + "/" + target
+            }
+            id to resolved
         }.toMap()
     }
 
-    /**
-     * spTree/grpSp 하위 도형을 순회한다.
-     * [groupMap]: 그룹 내부 좌표(EMU) → 슬라이드 좌표(EMU) 변환. null이면 항등.
-     */
     private fun parseShapeTree(
         tree: XmlNode,
         slideW: Long,
         slideH: Long,
         rels: Map<String, String>,
+        theme: Theme,
         mediaPath: (String) -> String?,
         out: MutableList<SlideElement>,
         groupMap: ((Long, Long, Long, Long) -> LongArray)?
@@ -137,9 +283,13 @@ class PptxParser : DocumentParser {
         var autoY = 0.05f
         for (node in tree.children) {
             when (node.name) {
-                "sp" -> parseSp(node, slideW, slideH, groupMap, autoY)?.let {
-                    out.add(it)
-                    if (it.h > 0f) autoY = (it.y + it.h + 0.02f).coerceAtMost(0.9f)
+                "sp" -> {
+                    parseSp(node, slideW, slideH, theme, groupMap, autoY).forEach { el ->
+                        out.add(el)
+                        if (el is SlideElement.TextBox && el.h > 0f) {
+                            autoY = (el.y + el.h + 0.02f).coerceAtMost(0.9f)
+                        }
+                    }
                 }
                 "pic" -> parsePic(node, slideW, slideH, rels, mediaPath, groupMap)?.let { out.add(it) }
                 "graphicFrame" -> parseGraphicFrame(node, slideW, slideH, groupMap)?.let { out.add(it) }
@@ -165,13 +315,12 @@ class PptxParser : DocumentParser {
                         val mh = h * ey / cey
                         outerMap?.invoke(mx, my, mw, mh) ?: longArrayOf(mx, my, mw, mh)
                     }
-                    parseShapeTree(node, slideW, slideH, rels, mediaPath, out, map)
+                    parseShapeTree(node, slideW, slideH, rels, theme, mediaPath, out, map)
                 }
             }
         }
     }
 
-    /** xfrm(off/ext) → 슬라이드 비율 좌표 [x,y,w,h]. 없으면 null */
     private fun readXfrm(
         xfrm: XmlNode?,
         slideW: Long,
@@ -191,22 +340,84 @@ class PptxParser : DocumentParser {
         )
     }
 
+    /** sp → Shape(채우기) 및/또는 TextBox. 텍스트 없는 장식 도형도 포함. */
     private fun parseSp(
         sp: XmlNode,
         slideW: Long,
         slideH: Long,
+        theme: Theme,
         groupMap: ((Long, Long, Long, Long) -> LongArray)?,
         autoY: Float
-    ): SlideElement.TextBox? {
-        val txBody = sp.child("txBody") ?: return null
+    ): List<SlideElement> {
+        val result = mutableListOf<SlideElement>()
+        val spPr = sp.child("spPr")
         val phType = sp.child("nvSpPr")?.find("ph")?.attr("type")
         val isTitle = phType == "title" || phType == "ctrTitle"
 
-        val rect = readXfrm(sp.child("spPr")?.child("xfrm"), slideW, slideH, groupMap)
+        val rect = readXfrm(spPr?.child("xfrm"), slideW, slideH, groupMap)
             ?: if (isTitle) floatArrayOf(0.05f, 0.04f, 0.9f, 0.14f)
             else floatArrayOf(0.05f, autoY.coerceAtLeast(0.2f), 0.9f, 0.6f)
 
+        val fill = extractFill(spPr, theme)
+        val stroke = extractStroke(spPr, theme)
+        val kind = when (spPr?.find("prstGeom")?.attr("prst")) {
+            "ellipse", "circle" -> SlideElement.Shape.Kind.ELLIPSE
+            "roundRect" -> SlideElement.Shape.Kind.ROUND_RECT
+            else -> SlideElement.Shape.Kind.RECT
+        }
+
+        val txBody = sp.child("txBody")
+        val paragraphs = if (txBody != null) parseParagraphs(txBody, isTitle, theme) else emptyList()
+
+        if (paragraphs.isNotEmpty()) {
+            result.add(
+                SlideElement.TextBox(
+                    rect[0], rect[1], rect[2], rect[3],
+                    paragraphs, fillRgb = fill
+                )
+            )
+        } else if (fill != null || stroke != null) {
+            // 텍스트 없는 장식 도형
+            result.add(
+                SlideElement.Shape(
+                    rect[0], rect[1], rect[2], rect[3],
+                    kind = kind,
+                    fillRgb = fill,
+                    strokeRgb = stroke?.first,
+                    strokePt = stroke?.second ?: 0f
+                )
+            )
+        }
+        return result
+    }
+
+    private fun extractFill(spPr: XmlNode?, theme: Theme): Int? {
+        if (spPr == null) return null
+        // noFill은 직접 자식일 때만 채우기 없음 (ln/noFill 과 혼동 금지)
+        if (spPr.children.any { it.name == "noFill" }) return null
+        spPr.child("solidFill")?.let { return extractColor(it, theme) }
+        // 그라데이션 → 첫 스탑 색으로 근사
+        spPr.child("gradFill")?.find("gsLst")?.children?.firstOrNull()?.let {
+            return extractColor(it, theme)
+        }
+        // 스타일 참조 없이 spPr에 직접 지정된 경우만
+        return null
+    }
+
+    private fun extractStroke(spPr: XmlNode?, theme: Theme): Pair<Int, Float>? {
+        val ln = spPr?.child("ln") ?: return null
+        if (ln.children.any { it.name == "noFill" }) return null
+        val color = extractColor(ln, theme) ?: return null
+        val wEmu = ln.attr("w")?.toLongOrNull() ?: 12700L
+        val pt = wEmu / 12700f
+        return color to pt
+    }
+
+    private fun parseParagraphs(txBody: XmlNode, isTitle: Boolean, theme: Theme): List<SlidePara> {
         val paragraphs = mutableListOf<SlidePara>()
+        // lstStyle 기본 크기 (lvl1pPr/defRPr)
+        val defSize = txBody.child("lstStyle")
+            ?.find("lvl1pPr")?.find("defRPr")?.attr("sz")?.toFloatOrNull()?.div(100f)
         for (p in txBody.childrenNamed("p")) {
             val pPr = p.child("pPr")
             val lvl = pPr?.attr("lvl")?.toIntOrNull() ?: 0
@@ -219,27 +430,28 @@ class PptxParser : DocumentParser {
                         val text = child.child("t")?.allText() ?: continue
                         if (text.isEmpty()) continue
                         val rPr = child.child("rPr")
+                        val color = rPr?.let { extractColor(it, theme) }
                         runs.add(
                             SlideRun(
                                 text = text,
                                 sizePt = rPr?.attr("sz")?.toFloatOrNull()?.div(100f)
-                                    ?: if (isTitle) 24f else null,
+                                    ?: defSize
+                                    ?: if (isTitle) 28f else null,
                                 bold = rPr?.attr("b") == "1",
                                 italic = rPr?.attr("i") == "1",
-                                colorRgb = rPr?.find("srgbClr")?.attr("val")
-                                    ?.toIntOrNull(16)
+                                colorRgb = color
                             )
                         )
                     }
                     "br" -> runs.add(SlideRun("\n"))
                 }
             }
+            // endParaRPr만 있고 텍스트 없는 빈 문단은 스킵
             if (runs.any { it.text.isNotBlank() }) {
                 paragraphs.add(SlidePara(runs, bullet, lvl, algn))
             }
         }
-        if (paragraphs.isEmpty()) return null
-        return SlideElement.TextBox(rect[0], rect[1], rect[2], rect[3], paragraphs)
+        return paragraphs
     }
 
     private fun parsePic(

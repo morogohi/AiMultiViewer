@@ -50,7 +50,15 @@ class HwpParser : DocumentParser {
         val sizePt: Float,
         val bold: Boolean,
         val italic: Boolean,
-        val colorRgb: Int
+        val colorRgb: Int,
+        val underline: Boolean = false
+    )
+
+    /** DocInfo BinData 메타 — 본문의 binItem은 이 목록의 1-based 인덱스 */
+    private class BinMeta(
+        val id: Int,
+        val ext: String,
+        val compressed: Boolean
     )
 
     private fun parseHwp(bytes: ByteArray, mediaDir: File): DocumentContent {
@@ -70,13 +78,16 @@ class HwpParser : DocumentParser {
             return DocumentContent(plainText = "", warning = "배포용(DRM) HWP 문서는 지원하지 않습니다.")
         }
 
-        // DocInfo: 글자모양(크기/굵기/기울임/색), 문단모양(정렬)
+        // DocInfo: 글자모양(크기/굵기/기울임/색), 문단모양(정렬), BinData 메타
         val charShapes = mutableListOf<CharShape>()
         val paraAligns = mutableListOf<Int>()
+        val paraSpacings = mutableListOf<Float>() // 문단 뒤 간격 배수 (근사)
+        val binMeta = mutableListOf<BinMeta>()    // DocInfo 순서 = 본문 binItem 인덱스
         cfb.readStream("DocInfo")?.let { raw ->
             val info = if (compressed) inflateRaw(raw) else raw
             parseRecords(info) { tag, _, payload ->
                 when (tag) {
+                    HWPTAG_BIN_DATA -> parseBinDataMeta(payload)?.let { binMeta.add(it) }
                     HWPTAG_CHAR_SHAPE -> if (payload.size >= 56) {
                         val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
                         val sizePt = bb.getInt(42) / 100f
@@ -90,20 +101,25 @@ class HwpParser : DocumentParser {
                                 sizePt = sizePt.coerceIn(4f, 96f),
                                 bold = attr and 2 != 0,
                                 italic = attr and 1 != 0,
-                                colorRgb = rgb
+                                colorRgb = rgb,
+                                underline = attr and 4 != 0
                             )
                         )
                     }
                     HWPTAG_PARA_SHAPE -> if (payload.size >= 4) {
-                        val attr1 = ByteBuffer.wrap(payload, 0, 4).order(ByteOrder.LITTLE_ENDIAN).int
+                        val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+                        val attr1 = bb.getInt(0)
                         paraAligns.add((attr1 ushr 2) and 7)
+                        // 문단 뒤 간격: 오프셋 12에 INT32 (HWPU, 200=100%) — 있으면 사용
+                        val after = if (payload.size >= 16) bb.getInt(12) / 200f else 1f
+                        paraSpacings.add(after.coerceIn(0.5f, 4f))
                     }
                 }
             }
         }
 
         // BinData: 삽입 이미지 스트림 → 캐시 파일 추출 (id → 경로)
-        val images = extractBinDataImages(cfb, compressed, mediaDir)
+        val images = extractBinDataImages(cfb, compressed, mediaDir, binMeta)
 
         val blocks = mutableListOf<DocBlock>()
         for (sectionName in cfb.streamsUnder("BodyText").sortedBy {
@@ -111,7 +127,7 @@ class HwpParser : DocumentParser {
         }) {
             val raw = cfb.readStream("BodyText", sectionName) ?: continue
             val data = if (compressed) inflateRaw(raw) else raw
-            blocks.addAll(parseSection(data, charShapes, paraAligns, images))
+            blocks.addAll(parseSection(data, charShapes, paraAligns, paraSpacings, images, binMeta))
         }
         if (blocks.isEmpty()) {
             return DocumentContent(plainText = "", warning = "본문 텍스트를 찾지 못했습니다.")
@@ -119,37 +135,120 @@ class HwpParser : DocumentParser {
         return DocumentContent(plainText = blocks.toPlainText(), blocks = blocks)
     }
 
-    /** BinData 스토리지의 "BIN%04X.ext" 스트림들을 캐시 파일로 추출한다. */
+    /**
+     * DocInfo HWPTAG_BIN_DATA 레코드 파싱.
+     * Embedding/Storage: [property:u16][extLen:u16][ext:WCHAR×n][id:u16]
+     */
+    private fun parseBinDataMeta(payload: ByteArray): BinMeta? {
+        if (payload.size < 4) return null
+        val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        val prop = bb.short.toInt() and 0xFFFF
+        val type = prop and 0xF
+        val itemCompressed = (prop and 0x10) != 0
+        if (type !in 1..2) return null // Link 제외
+        val extLen = bb.short.toInt() and 0xFFFF
+        if (extLen < 0 || bb.remaining() < extLen * 2 + 2) return null
+        val extChars = CharArray(extLen)
+        for (i in 0 until extLen) extChars[i] = bb.short.toInt().and(0xFFFF).toChar()
+        val ext = String(extChars).lowercase().removePrefix(".")
+        val id = bb.short.toInt() and 0xFFFF
+        return BinMeta(id, ext, itemCompressed)
+    }
+
+    /**
+     * BinData 스토리지의 이미지 스트림을 캐시로 추출.
+     * - DocInfo 메타의 id/확장자 우선
+     * - 파일명 BIN####.ext 패턴
+     * - 확장자 없거나 미지정이면 매직 바이트로 판별
+     */
     private fun extractBinDataImages(
         cfb: CfbReader,
-        compressed: Boolean,
-        mediaDir: File
+        fileCompressed: Boolean,
+        mediaDir: File,
+        binMeta: List<BinMeta>
     ): Map<Int, String> {
         val result = mutableMapOf<Int, String>()
-        val nameRegex = Regex("""(?i)BIN([0-9A-F]{4})\.(\w+)""")
+        if (!mediaDir.exists()) mediaDir.mkdirs()
+
+        fun writeImage(id: Int, raw: ByteArray, preferExt: String, forceInflate: Boolean): Boolean {
+            if (raw.isEmpty() || raw.size > 20_000_000) return false
+            val candidates = buildList {
+                if (forceInflate || fileCompressed) {
+                    runCatching { inflateRaw(raw) }.getOrNull()?.takeIf { it.isNotEmpty() }?.let { add(it) }
+                }
+                add(raw)
+            }
+            for (bytes in candidates) {
+                val ext = detectImageExt(bytes) ?: preferExt.takeIf { it in RASTER_EXTS }
+                if (ext == null) continue
+                val f = File(mediaDir, "bin%04x.%s".format(id, ext))
+                val ok = f.exists() || runCatching { f.writeBytes(bytes) }.isSuccess
+                if (ok && BitmapHeaderOk(f)) {
+                    result[id] = f.absolutePath
+                    return true
+                }
+            }
+            return false
+        }
+
+        // 1) DocInfo 메타 기반
+        for (meta in binMeta) {
+            if (result.containsKey(meta.id)) continue
+            val streamName = cfb.streamsUnder("BinData").firstOrNull { name ->
+                name.uppercase().startsWith("BIN%04X".format(meta.id)) ||
+                    name.uppercase().startsWith("BIN${meta.id}")
+            } ?: "BIN%04X.${meta.ext.ifBlank { "JPG" }}".format(meta.id).let { want ->
+                cfb.streamsUnder("BinData").firstOrNull { it.equals(want, true) }
+            }
+            val raw = streamName?.let { cfb.readStream("BinData", it) } ?: continue
+            writeImage(meta.id, raw, meta.ext, meta.compressed)
+        }
+
+        // 2) 남은 BIN#### 스트림 전부 스캔
+        val nameRegex = Regex("""(?i)BIN([0-9A-F]{4})(?:\.(\w+))?""")
         for (name in cfb.streamsUnder("BinData")) {
             val m = nameRegex.matchEntire(name) ?: continue
-            val ext = m.groupValues[2].lowercase()
-            if (ext !in setOf("png", "jpg", "jpeg", "gif", "bmp", "webp")) continue
             val id = m.groupValues[1].toIntOrNull(16) ?: continue
+            if (result.containsKey(id)) continue
             val raw = cfb.readStream("BinData", name) ?: continue
-            val bytes = if (compressed) {
-                runCatching { inflateRaw(raw) }.getOrNull()?.takeIf { it.isNotEmpty() } ?: raw
-            } else raw
-            if (bytes.size > 20_000_000) continue
-            if (!mediaDir.exists()) mediaDir.mkdirs()
-            val f = File(mediaDir, name.lowercase())
-            val written = f.exists() || runCatching { f.writeBytes(bytes) }.isSuccess
-            if (written) result[id] = f.absolutePath
+            writeImage(id, raw, m.groupValues.getOrNull(2)?.lowercase().orEmpty(), fileCompressed)
         }
         return result
+    }
+
+    /** 파일 헤더가 실제 디코딩 가능한 이미지인지 가볍게 확인 */
+    private fun BitmapHeaderOk(f: File): Boolean {
+        val head = ByteArray(12)
+        val n = runCatching {
+            f.inputStream().use { it.read(head) }
+        }.getOrDefault(-1)
+        if (n < 4) return false
+        return detectImageExt(head) != null
+    }
+
+    private fun detectImageExt(bytes: ByteArray): String? {
+        if (bytes.size < 4) return null
+        // PNG
+        if (bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
+            bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()
+        ) return "png"
+        // JPEG
+        if (bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte()) return "jpg"
+        // GIF
+        if (bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() && bytes[2] == 0x46.toByte()) return "gif"
+        // BMP
+        if (bytes[0] == 0x42.toByte() && bytes[1] == 0x4D.toByte()) return "bmp"
+        // WEBP (RIFF....WEBP)
+        if (bytes.size >= 12 && bytes[0] == 0x52.toByte() && bytes[8] == 0x57.toByte()) return "webp"
+        return null
     }
 
     /** 서식 적용 대기 중인 본문 문단 */
     private class PendingPara(
         val chars: String,
         val rawPos: IntArray,
-        val align: Int
+        val align: Int,
+        val spacing: Float = 1f
     )
 
     /**
@@ -163,7 +262,9 @@ class HwpParser : DocumentParser {
         data: ByteArray,
         charShapes: List<CharShape>,
         paraAligns: List<Int>,
-        images: Map<Int, String>
+        paraSpacings: List<Float>,
+        images: Map<Int, String>,
+        binMeta: List<BinMeta>
     ): List<DocBlock> {
         val blocks = mutableListOf<DocBlock>()
 
@@ -173,10 +274,25 @@ class HwpParser : DocumentParser {
         var cellCol = -1
         var cellSeq = 0
         var pendingTableLevel = -1
-        var skipCtrlLevel = -1     // head/foot 등 제외 대상 컨트롤의 레벨
-        var curAlign = 1           // 현재 문단 정렬 (PARA_HEADER에서 갱신)
+        var skipCtrlLevel = -1
+        var curAlign = 1
+        var curSpacing = 1f
         var pending: PendingPara? = null
         val usedImages = mutableSetOf<Int>()
+
+        fun resolveImage(binItem: Int): String? {
+            // 1) DocInfo 메타 인덱스(1-based) → id
+            binMeta.getOrNull(binItem - 1)?.let { meta ->
+                images[meta.id]?.let { return it }
+            }
+            // 2) binItem 자체를 BinData id로
+            images[binItem]?.let { return it }
+            // 3) 0-based 인덱스
+            binMeta.getOrNull(binItem)?.let { meta ->
+                images[meta.id]?.let { return it }
+            }
+            return null
+        }
 
         fun emitPending(runsSpec: List<Pair<Int, Int>>?) {
             val p = pending ?: return
@@ -204,12 +320,12 @@ class HwpParser : DocumentParser {
                             sizePt = cs?.sizePt,
                             bold = cs?.bold ?: false,
                             italic = cs?.italic ?: false,
-                            colorRgb = cs?.colorRgb?.takeIf { it != 0 }
+                            colorRgb = cs?.colorRgb?.takeIf { it != 0 },
+                            underline = cs?.underline ?: false
                         )
                     )
                 }
             }
-            // 마지막 런의 꼬리 개행 제거
             while (runs.isNotEmpty()) {
                 val last = runs.last()
                 val trimmed = last.text.trimEnd('\n')
@@ -218,21 +334,21 @@ class HwpParser : DocumentParser {
                 else { runs[runs.lastIndex] = last.copy(text = trimmed); break }
             }
             if (runs.isEmpty()) return
-            blocks.add(DocBlock.RichPara(runs, p.align))
+            blocks.add(DocBlock.RichPara(runs, p.align, p.spacing))
         }
 
         fun flushTable() {
             val t = table ?: return
             val rows = t.map { r -> r.map { it.toString().trim() } }
-            val compact = compactTable(rows)
-            if (compact.isNotEmpty()) blocks.add(DocBlock.Table(compact))
+            // 완전 빈 행만 제거 (열 압축은 병합 표를 깨뜨리므로 하지 않음)
+            val kept = rows.filter { r -> r.any { it.isNotBlank() } }
+            if (kept.isNotEmpty()) blocks.add(DocBlock.Table(kept))
             table = null
             tableCtrlLevel = -1
             cellRow = -1; cellCol = -1; cellSeq = 0
         }
 
         parseRecords(data) { tag, level, payload ->
-            // 제외 컨트롤(머리말 등) 종료 감지
             if (skipCtrlLevel >= 0 && level <= skipCtrlLevel) skipCtrlLevel = -1
 
             when (tag) {
@@ -243,6 +359,7 @@ class HwpParser : DocumentParser {
                         val shapeId = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
                             .getShort(8).toInt() and 0xFFFF
                         curAlign = paraAligns.getOrElse(shapeId) { 1 }
+                        curSpacing = paraSpacings.getOrElse(shapeId) { 1f }
                     }
                 }
                 HWPTAG_CTRL_HEADER -> {
@@ -285,15 +402,13 @@ class HwpParser : DocumentParser {
                     }
                 }
                 HWPTAG_SHAPE_PICTURE -> {
-                    if (skipCtrlLevel < 0 && payload.size >= 70) {
-                        val binItem = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
-                            .getShort(68).toInt() and 0xFFFF
-                        val path = images[binItem]
-                            ?: images.entries.firstOrNull { it.key !in usedImages }?.value
+                    if (skipCtrlLevel < 0 && payload.size >= 4) {
+                        val path = findPicturePath(payload, ::resolveImage, images, usedImages)
                         if (path != null) {
-                            usedImages.add(images.entries.first { it.value == path }.key)
                             emitPending(null)
-                            blocks.add(DocBlock.Image(path))
+                            // 이미지 표시 폭: 페이로드 앞쪽 크기 정보로 근사 (없으면 0.85)
+                            val frac = estimateImageWidth(payload)
+                            blocks.add(DocBlock.Image(path, frac))
                         }
                     }
                 }
@@ -312,7 +427,7 @@ class HwpParser : DocumentParser {
                         emitPending(null)
                         val (chars, rawPos) = decodeParaTextWithPos(payload)
                         if (chars.isNotBlank()) {
-                            pending = PendingPara(chars, rawPos, curAlign)
+                            pending = PendingPara(chars, rawPos, curAlign, curSpacing)
                         }
                     }
                 }
@@ -333,6 +448,52 @@ class HwpParser : DocumentParser {
         emitPending(null)
         flushTable()
         return blocks
+    }
+
+    /** SHAPE_PICTURE 페이로드에서 binItem을 여러 오프셋으로 탐색 */
+    private fun findPicturePath(
+        payload: ByteArray,
+        resolve: (Int) -> String?,
+        images: Map<Int, String>,
+        used: MutableSet<Int>
+    ): String? {
+        val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        // 흔한 위치: 68, 그리고 끝에서 2바이트, 그리고 4바이트 단위 스캔
+        val candidates = mutableListOf<Int>()
+        if (payload.size >= 70) candidates += bb.getShort(68).toInt() and 0xFFFF
+        if (payload.size >= 2) candidates += bb.getShort(payload.size - 2).toInt() and 0xFFFF
+        var off = 0
+        while (off + 2 <= payload.size) {
+            candidates += bb.getShort(off).toInt() and 0xFFFF
+            off += 2
+            if (candidates.size > 40) break
+        }
+        for (id in candidates.distinct()) {
+            if (id == 0 || id > 0x7FFF) continue
+            resolve(id)?.let {
+                used.add(id)
+                return it
+            }
+        }
+        // 최후: 아직 안 쓴 이미지 하나 (문서에 이미지가 1개일 때)
+        if (images.size == 1) {
+            val (k, v) = images.entries.first()
+            if (k !in used) { used.add(k); return v }
+        }
+        return null
+    }
+
+    /** 그림 컴포넌트 크기에서 페이지 폭 비율 근사 (없으면 0.9) */
+    private fun estimateImageWidth(payload: ByteArray): Float {
+        if (payload.size < 16) return 0.9f
+        val bb = ByteBuffer.wrap(payload).order(ByteOrder.LITTLE_ENDIAN)
+        // 앞쪽 INT32 쌍이 너비/높이(HWPUNIT)인 경우가 많음
+        val w = bb.getInt(0)
+        if (w in 1000..200_000) {
+            // A4 본문폭 ≈ 42000 HWPUNIT 가정
+            return (w / 42000f).coerceIn(0.25f, 1f)
+        }
+        return 0.9f
     }
 
     /** 본문 디코딩 + 각 문자별 원시 위치(WCHAR 단위, 컨트롤=8칸) 추적 */
@@ -445,6 +606,8 @@ class HwpParser : DocumentParser {
         private const val HWPTAG_LIST_HEADER = 72
         private const val HWPTAG_TABLE = 77
         private const val HWPTAG_SHAPE_PICTURE = 85
+
+        private val RASTER_EXTS = setOf("png", "jpg", "jpeg", "gif", "bmp", "webp")
 
         private fun ctrlId(a: Char, b: Char, c: Char, d: Char) =
             (a.code shl 24) or (b.code shl 16) or (c.code shl 8) or d.code
