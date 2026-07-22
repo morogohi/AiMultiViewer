@@ -21,7 +21,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onDocumentPicked(uri: Uri) {
         val context = getApplication<Application>()
+        // TXT/MD 편집을 위해 쓰기 권한까지 시도, 미허용 문서는 읽기 전용으로 유지
         runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        }.recoverCatching {
             context.contentResolver.takePersistableUriPermission(
                 uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
             )

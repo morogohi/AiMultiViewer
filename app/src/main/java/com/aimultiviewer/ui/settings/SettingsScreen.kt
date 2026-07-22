@@ -12,6 +12,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -22,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -30,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.aimultiviewer.data.AiProvider
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -39,9 +42,10 @@ fun SettingsScreen(
 ) {
     val initial = remember { viewModel.snapshot() }
     var cloudEnabled by remember { mutableStateOf(initial.cloudEnabled) }
-    var baseUrl by remember { mutableStateOf(initial.baseUrl) }
-    var apiKey by remember { mutableStateOf(initial.apiKey) }
-    var model by remember { mutableStateOf(initial.model) }
+    var provider by remember { mutableStateOf(initial.provider) }
+    var customBaseUrl by remember { mutableStateOf(initial.customBaseUrl) }
+    val apiKeys = remember { mutableStateMapOf<AiProvider, String>().apply { putAll(initial.apiKeys) } }
+    val models = remember { mutableStateMapOf<AiProvider, String>().apply { putAll(initial.models) } }
     var wikiExport by remember { mutableStateOf(initial.wikiAutoExport) }
     var saved by remember { mutableStateOf(false) }
 
@@ -67,8 +71,7 @@ fun SettingsScreen(
         ) {
             Text("클라우드 AI", style = MaterialTheme.typography.titleMedium)
             Text(
-                "끄면 요약은 온디바이스로 동작합니다. 켜면 질의응답·비교·회의록·기술분석 등 고품질 기능이 활성화됩니다. " +
-                    "OpenAI 호환 API를 지원합니다.",
+                "끄면 요약은 온디바이스로 동작합니다. 켜면 질의응답·비교·회의록·기술분석 등 고품질 기능이 활성화됩니다.",
                 style = MaterialTheme.typography.bodySmall
             )
 
@@ -81,27 +84,61 @@ fun SettingsScreen(
                 Switch(checked = cloudEnabled, onCheckedChange = { cloudEnabled = it; saved = false })
             }
 
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it; saved = false },
+            Text("AI 제공자", style = MaterialTheme.typography.titleSmall)
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Base URL") },
-                singleLine = true
-            )
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                AiProvider.entries.forEach { p ->
+                    FilterChip(
+                        selected = provider == p,
+                        onClick = { provider = p; saved = false },
+                        label = { Text(p.label, style = MaterialTheme.typography.labelMedium) }
+                    )
+                }
+            }
+
+            if (provider == AiProvider.CUSTOM) {
+                OutlinedTextField(
+                    value = customBaseUrl,
+                    onValueChange = { customBaseUrl = it; saved = false },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Base URL (OpenAI 호환)") },
+                    singleLine = true
+                )
+            } else {
+                Text(
+                    "엔드포인트: ${provider.presetBaseUrl}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline
+                )
+            }
+
             OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it; saved = false },
+                value = apiKeys[provider].orEmpty(),
+                onValueChange = { apiKeys[provider] = it; saved = false },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key") },
+                label = {
+                    Text("${provider.label} API Key" +
+                        if (provider.keyHint.isNotEmpty()) " (${provider.keyHint})" else "")
+                },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation()
             )
             OutlinedTextField(
-                value = model,
-                onValueChange = { model = it; saved = false },
+                value = models[provider].orEmpty(),
+                onValueChange = { models[provider] = it; saved = false },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("모델명 (예: gpt-4o-mini)") },
+                label = {
+                    Text("모델명" +
+                        if (provider.defaultModel.isNotEmpty()) " (기본: ${provider.defaultModel})" else "")
+                },
                 singleLine = true
+            )
+            Text(
+                "제공자별 API Key와 모델명은 각각 저장되어 전환해도 유지됩니다.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline
             )
 
             Text("llm-wiki 자동 수집", style = MaterialTheme.typography.titleMedium)
@@ -122,14 +159,24 @@ fun SettingsScreen(
 
             Button(
                 onClick = {
-                    viewModel.save(SettingsSnapshot(cloudEnabled, baseUrl, apiKey, model, wikiExport))
+                    viewModel.save(
+                        SettingsSnapshot(
+                            cloudEnabled = cloudEnabled,
+                            provider = provider,
+                            customBaseUrl = customBaseUrl,
+                            apiKeys = apiKeys.toMap(),
+                            models = models.toMap(),
+                            wikiAutoExport = wikiExport
+                        )
+                    )
                     saved = true
                 },
                 modifier = Modifier.fillMaxWidth()
             ) { Text(if (saved) "저장됨 ✓" else "저장") }
 
             Text(
-                "지원 문서: HWP · HWPX · DOCX · PPTX · XLSX · PDF · ODF · 이미지(OCR) · Google 문서 · TXT · Markdown",
+                "지원 문서: HWP · HWPX · DOCX · PPTX · XLSX · PDF · ODF · 이미지(OCR) · Google 문서 · TXT · Markdown\n" +
+                    "TXT·Markdown은 편집 가능, 그 외 문서는 뷰어 전용입니다.",
                 style = MaterialTheme.typography.bodySmall
             )
         }

@@ -10,10 +10,12 @@ import com.aimultiviewer.data.wiki.WikiExporter
 import com.aimultiviewer.domain.model.DocFormat
 import com.aimultiviewer.domain.model.Document
 import com.aimultiviewer.domain.model.DocumentContent
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ViewerUiState(
     val document: Document? = null,
@@ -21,7 +23,9 @@ data class ViewerUiState(
     val loading: Boolean = true,
     val aiTitle: String = "",
     val aiOutput: String = "",
-    val aiLoading: Boolean = false
+    val aiLoading: Boolean = false,
+    /** 편집 저장 결과 알림 (null=없음) */
+    val editMessage: String? = null
 )
 
 class ViewerViewModel(app: Application) : AndroidViewModel(app) {
@@ -90,5 +94,38 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     fun isParsedText(): Boolean {
         val c = _state.value.content ?: return false
         return _state.value.document?.format != DocFormat.PDF || c.plainText.isNotBlank()
+    }
+
+    /** TXT/Markdown 등 일반 텍스트 문서만 편집 허용 (그 외 포맷은 뷰어 전용) */
+    val isEditable: Boolean
+        get() = _state.value.document?.format in setOf(DocFormat.TXT, DocFormat.MARKDOWN)
+
+    /** 편집한 텍스트를 원본 파일에 저장 */
+    fun saveText(newText: String) {
+        val doc = _state.value.document ?: return
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    appCtx.contentResolver.openOutputStream(Uri.parse(doc.uri), "wt")
+                        ?.use { it.write(newText.toByteArray(Charsets.UTF_8)) }
+                        ?: throw IllegalStateException("파일 스트림을 열 수 없습니다")
+                }
+            }
+            _state.value = if (result.isSuccess) {
+                _state.value.copy(
+                    content = _state.value.content?.copy(plainText = newText),
+                    editMessage = "저장되었습니다."
+                )
+            } else {
+                _state.value.copy(
+                    editMessage = "저장 실패 (읽기 전용 문서일 수 있습니다. 문서를 다시 추가해 주세요): " +
+                        result.exceptionOrNull()?.message.orEmpty()
+                )
+            }
+        }
+    }
+
+    fun clearEditMessage() {
+        _state.value = _state.value.copy(editMessage = null)
     }
 }
