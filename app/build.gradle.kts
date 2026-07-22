@@ -23,8 +23,8 @@ android {
         applicationId = "com.aimultiviewer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.6.1"
+        versionCode = 8
+        versionName = "0.7.0"
         vectorDrawables { useSupportLibrary = true }
     }
 

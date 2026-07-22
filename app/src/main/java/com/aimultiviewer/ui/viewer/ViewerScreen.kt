@@ -115,30 +115,37 @@ private fun DocumentContentView(state: ViewerUiState) {
                     modifier = Modifier.fillMaxSize()
                 )
 
-            content.renderableUri != null ->
+            content.renderableUri != null -> ZoomableCanvas {
                 PdfViewer(uriString = content.renderableUri, modifier = Modifier.fillMaxSize())
+            }
 
-            content.slideDeck != null ->
+            content.slideDeck != null -> ZoomableCanvas {
                 SlideDeckViewer(deck = content.slideDeck, modifier = Modifier.fillMaxSize())
+            }
 
-            content.isMarkdown ->
+            content.isMarkdown -> ZoomableDoc {
                 MarkdownText(
                     markdown = content.plainText,
                     modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
                 )
+            }
 
-            content.blocks != null ->
+            content.blocks != null -> ZoomableDoc {
                 StructuredDocView(
                     blocks = content.blocks,
                     modifier = Modifier.fillMaxSize(),
-                    pageStyle = state.document?.format in setOf(DocFormat.HWP, DocFormat.HWPX)
+                    pageStyle = state.document?.format in
+                        setOf(DocFormat.HWP, DocFormat.HWPX, DocFormat.DOCX)
                 )
+            }
 
-            else -> Text(
-                text = content.plainText.ifBlank { "표시할 텍스트가 없습니다." },
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
-            )
+            else -> ZoomableDoc {
+                Text(
+                    text = content.plainText.ifBlank { "표시할 텍스트가 없습니다." },
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp)
+                )
+            }
         }
     }
 }
