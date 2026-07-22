@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 멀티뷰어 — 문서를 보고, AI로 이해하다</title>
+<meta name="description" content="HWP·Word·PPT·Excel·PDF·이미지(OCR)를 하나의 앱에서. 온디바이스 파서와 AI 요약, Obsidian 자동 수집까지 담은 안드로이드 문서 뷰어.">
+<style>
+  :root {
+    --teal-900: #06414d;
+    --teal-700: #0b7285;
+    --teal-400: #3ba8b8;
+    --teal-100: #d3f0f5;
+    --teal-50:  #edf9fb;
+    --amber:    #f5a623;
+    --ink:      #102a2e;
+    --muted:    #44605f;
+    --bg:       #f6fafb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: "Pretendard", "Noto Sans KR", -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    color: var(--ink); background: var(--bg); line-height: 1.65;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- 헤더 ---- */
+  header {
+    position: sticky; top: 0; z-index: 50;
+    background: rgba(246,250,251,.88); backdrop-filter: blur(10px);
+    border-bottom: 1px solid #e2eef0;
+  }
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 64px; }
+  .logo { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 18px; color: var(--teal-900); text-decoration: none; }
+  .logo-mark {
+    width: 34px; height: 34px; border-radius: 9px; background: var(--teal-700);
+    display: grid; place-items: center; color: #fff; font-size: 13px; font-weight: 800;
+  }
+  .nav-links { display: flex; gap: 22px; align-items: center; }
+  .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; font-weight: 600; }
+  .nav-links a:hover { color: var(--teal-700); }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--teal-700); color: #fff; font-weight: 700; font-size: 15px;
+    padding: 12px 22px; border-radius: 999px; text-decoration: none; border: 0; cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(11,114,133,.28); }
+  .btn.small { padding: 9px 18px; font-size: 13.5px; }
+  .btn.ghost { background: transparent; color: var(--teal-700); border: 2px solid var(--teal-400); }
+  .btn.ghost:hover { box-shadow: none; background: var(--teal-50); }
+
+  /* ---- 히어로 ---- */
+  .hero {
+    background: linear-gradient(160deg, var(--teal-900) 0%, var(--teal-700) 55%, var(--teal-400) 120%);
+    color: #fff; padding: 88px 0 110px; overflow: hidden;
+  }
+  .hero .wrap { display: grid; grid-template-columns: 1.15fr .85fr; gap: 48px; align-items: center; }
+  .eyebrow {
+    display: inline-block; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.25);
+    padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600; margin-bottom: 22px;
+  }
+  .hero h1 { font-size: 46px; line-height: 1.25; font-weight: 800; letter-spacing: -.5px; }
+  .hero h1 .accent { color: var(--amber); }
+  .hero p.lead { margin: 20px 0 34px; font-size: 18px; color: #d9eef2; max-width: 30em; }
+  .hero-actions { display: flex; gap: 14px; flex-wrap: wrap; }
+  .hero-actions .btn.primary { background: var(--amber); color: var(--ink); }
+  .hero-actions .btn.primary:hover { box-shadow: 0 8px 20px rgba(245,166,35,.35); }
+  .hero-actions .btn.outline { background: transparent; border: 2px solid rgba(255,255,255,.55); }
+  .hero-actions .btn.outline:hover { background: rgba(255,255,255,.1); box-shadow: none; }
+  .hero-shot {
+    width: 100%; max-width: 330px; border-radius: 28px; justify-self: center;
+    box-shadow: 0 24px 60px rgba(0,0,0,.35); border: 6px solid rgba(255,255,255,.18);
+  }
+  .fmt-strip { margin-top: 40px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .fmt {
+    font-size: 12.5px; font-weight: 700; padding: 5px 12px; border-radius: 999px;
+    background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.22);
+  }
+
+  /* ---- 섹션 공통 ---- */
+  section { padding: 84px 0; }
+  .sec-title { text-align: center; font-size: 32px; font-weight: 800; letter-spacing: -.4px; }
+  .sec-sub { text-align: center; color: var(--muted); margin: 12px auto 52px; max-width: 40em; }
+
+  /* ---- 기능 카드 ---- */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; }
+  .card {
+    background: #fff; border: 1px solid #e2eef0; border-radius: 20px; padding: 28px 24px;
+    transition: transform .18s, box-shadow .18s;
+  }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 14px 32px rgba(6,65,77,.1); }
+  .card .ico {
+    width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center;
+    font-size: 22px; margin-bottom: 16px; background: var(--teal-50);
+  }
+  .card h3 { font-size: 17px; margin-bottom: 8px; }
+  .card p { font-size: 14px; color: var(--muted); }
+
+  /* ---- 스크린샷 갤러리 ---- */
+  .shots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .shot-card { text-align: center; }
+  .shot-card img {
+    width: 100%; border-radius: 18px; border: 1px solid #dbe9ec;
+    box-shadow: 0 10px 28px rgba(6,65,77,.12);
+  }
+  .shot-card figcaption { margin-top: 12px; font-size: 13.5px; font-weight: 600; color: var(--muted); }
+
+  /* ---- 포맷 표 ---- */
+  .fmt-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 16px; overflow: hidden; box-shadow: 0 2px 8px rgba(6,65,77,.06); }
+  .fmt-table th, .fmt-table td { padding: 13px 18px; text-align: left; font-size: 14.5px; }
+  .fmt-table thead th { background: var(--teal-700); color: #fff; font-weight: 700; }
+  .fmt-table tbody tr:nth-child(even) { background: var(--teal-50); }
+  .tag { display: inline-block; font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: var(--teal-100); color: var(--teal-900); }
+
+  /* ---- AI 제공자 ---- */
+  .providers { display: flex; justify-content: center; gap: 16px; flex-wrap: wrap; }
+  .provider {
+    background: #fff; border: 1px solid #e2eef0; border-radius: 16px;
+    padding: 18px 30px; font-weight: 800; font-size: 17px; color: var(--ink);
+    box-shadow: 0 2px 8px rgba(6,65,77,.05);
+  }
+  .provider small { display: block; font-weight: 500; font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+  /* ---- 다운로드 ---- */
+  .cta {
+    background: linear-gradient(160deg, var(--teal-900), var(--teal-700));
+    border-radius: 28px; color: #fff; text-align: center; padding: 64px 32px;
+  }
+  .cta h2 { font-size: 30px; font-weight: 800; }
+  .cta p { color: #cfe9ee; margin: 14px 0 30px; }
+  .cta .btn { background: var(--amber); color: var(--ink); font-size: 17px; padding: 15px 34px; }
+  .cta .note { font-size: 12.5px; color: #9fcbd4; margin-top: 18px; }
+
+  footer { padding: 40px 0 56px; text-align: center; color: var(--muted); font-size: 13.5px; }
+  footer a { color: var(--teal-700); }
+
+  @media (max-width: 880px) {
+    .hero .wrap { grid-template-columns: 1fr; text-align: center; }
+    .hero h1 { font-size: 34px; }
+    .hero p.lead { margin-inline: auto; }
+    .hero-actions, .fmt-strip { justify-content: center; }
+    .hero-shot { display: none; }
+    .grid { grid-template-columns: 1fr; }
+    .shots { grid-template-columns: repeat(2, 1fr); }
+    .nav-links a:not(.btn) { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <a class="logo" href="#">
+      <span class="logo-mark">AI</span> AI 멀티뷰어
+    </a>
+    <nav class="nav-links">
+      <a href="#features">기능</a>
+      <a href="#shots">화면</a>
+      <a href="#formats">지원 포맷</a>
+      <a href="#ai">AI 연동</a>
+      <a class="btn small" href="https://github.com/morogohi/AiMultiViewer/releases/latest">APK 다운로드</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <div>
+      <span class="eyebrow">Android · 온디바이스 파서 · 오픈소스</span>
+      <h1>문서를 보고,<br><span class="accent">AI</span>로 이해하다</h1>
+      <p class="lead">
+        HWP·Word·PPT·Excel·PDF·이미지(OCR)까지 하나의 앱에서.
+        외부 서버 없이 기기에서 직접 판독하고, AI 요약과 Q&amp;A,
+        Obsidian 지식 수집까지 이어지는 안드로이드 문서 뷰어입니다.
+      </p>
+      <div class="hero-actions">
+        <a class="btn primary" href="https://github.com/morogohi/AiMultiViewer/releases/latest">⬇ 최신 APK 받기</a>
+        <a class="btn outline" href="https://github.com/morogohi/AiMultiViewer">GitHub 보기</a>
+      </div>
+      <div class="fmt-strip">
+        <span class="fmt">HWP</span><span class="fmt">HWPX</span><span class="fmt">DOCX</span>
+        <span class="fmt">PPTX</span><span class="fmt">XLSX</span><span class="fmt">PDF</span>
+        <span class="fmt">이미지 OCR</span><span class="fmt">Google 문서</span>
+        <span class="fmt">Markdown</span><span class="fmt">TXT</span>
+      </div>
+    </div>
+    <img class="hero-shot" src="assets/shot_docx.png" alt="AI 멀티뷰어로 워드 문서를 보는 화면">
+  </div>
+</section>
+
+<section id="features">
+  <div class="wrap">
+    <h2 class="sec-title">핵심 기능</h2>
+    <p class="sec-sub">문서 판독부터 AI 분석, 지식 축적까지 — 열람 이후의 흐름을 하나로 연결합니다.</p>
+    <div class="grid">
+      <div class="card"><div class="ico">📄</div>
+        <h3>원본에 가까운 렌더링</h3>
+        <p>HWP 5.0 바이너리·OOXML을 자체 파서로 해석해 글자 서식, 문단 정렬, 표, 삽입 이미지를 종이 페이지 스타일로 재현합니다.</p></div>
+      <div class="card"><div class="ico">🖼️</div>
+        <h3>PPT 슬라이드 캔버스</h3>
+        <p>파워포인트 슬라이드를 원본 위치·크기·서식 그대로 시각 재현합니다. 발표자 노트까지 함께 확인할 수 있습니다.</p></div>
+      <div class="card"><div class="ico">🔍</div>
+        <h3>깨짐 없는 핀치 줌</h3>
+        <p>렌더링된 화면을 이미지처럼 픽셀 그대로 확대·이동합니다. 확대 중에도 글자가 깨지거나 재배치되지 않습니다.</p></div>
+      <div class="card"><div class="ico">👁️</div>
+        <h3>이미지 OCR 판독</h3>
+        <p>사진·스캔 문서를 온디바이스 ML Kit OCR(한국어+영문)로 텍스트화합니다. 네트워크 없이 동작합니다.</p></div>
+      <div class="card"><div class="ico">✏️</div>
+        <h3>텍스트 문서 편집</h3>
+        <p>TXT·Markdown은 뷰어에서 바로 수정하고 원본 파일에 저장합니다. 오피스 문서는 안전한 뷰어 전용입니다.</p></div>
+      <div class="card"><div class="ico">🧠</div>
+        <h3>AI 요약·Q&amp;A·비교</h3>
+        <p>온디바이스 요약은 키 없이 즉시. 클라우드 연결 시 질의응답, 문서 비교, 회의록 생성, 기술문서 분석까지 확장됩니다.</p></div>
+      <div class="card"><div class="ico">📚</div>
+        <h3>Obsidian 자동 수집</h3>
+        <p>열람한 문서를 요약+전문 마크다운으로 변환해 llm-wiki 볼트에 자동 축적합니다. 보는 것이 곧 지식이 됩니다.</p></div>
+      <div class="card"><div class="ico">🔒</div>
+        <h3>프라이버시 우선</h3>
+        <p>문서 판독은 전부 기기 안에서 수행됩니다. 클라우드 AI는 선택 사항이며 언제든 끌 수 있습니다.</p></div>
+      <div class="card"><div class="ico">⚙️</div>
+        <h3>오픈소스 · CI 배포</h3>
+        <p>GitHub Actions로 서명된 APK가 자동 릴리스됩니다. 코드와 개발 문서가 모두 공개되어 있습니다.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="shots" style="background:#fff;">
+  <div class="wrap">
+    <h2 class="sec-title">화면 미리보기</h2>
+    <p class="sec-sub">실제 기기에서 캡처한 화면입니다.</p>
+    <div class="shots">
+      <figure class="shot-card"><img src="assets/shot_docx.png" alt="워드 문서 페이지 뷰"><figcaption>Word — 서식 보존 페이지 뷰</figcaption></figure>
+      <figure class="shot-card"><img src="assets/shot_pptx.png" alt="PPT 슬라이드 캔버스"><figcaption>PPT — 슬라이드 캔버스</figcaption></figure>
+      <figure class="shot-card"><img src="assets/shot_hwp.png" alt="HWP 표 구조 렌더링"><figcaption>HWP — 표·양식 재현</figcaption></figure>
+      <figure class="shot-card"><img src="assets/shot_ai.png" alt="AI 제공자 설정"><figcaption>AI 제공자 선택</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section id="formats">
+  <div class="wrap">
+    <h2 class="sec-title">지원 포맷</h2>
+    <p class="sec-sub">모두 자체 구현 파서 — 무거운 외부 라이브러리나 변환 서버가 없습니다.</p>
+    <table class="fmt-table">
+      <thead><tr><th>포맷</th><th>렌더링</th><th>비고</th></tr></thead>
+      <tbody>
+        <tr><td><b>HWP / HWPX</b></td><td><span class="tag">페이지 뷰</span></td><td>HWP 5.0 바이너리 자체 파서 — 글자 서식·정렬·표·삽입 이미지</td></tr>
+        <tr><td><b>DOCX</b></td><td><span class="tag">페이지 뷰</span></td><td>글자 크기/굵기/색, 문단 정렬, 표 그리드, 삽입 이미지</td></tr>
+        <tr><td><b>PPTX</b></td><td><span class="tag">슬라이드 캔버스</span></td><td>원본 레이아웃 시각 재현 + 발표자 노트</td></tr>
+        <tr><td><b>XLSX</b></td><td><span class="tag">표 그리드</span></td><td>시트별 열 정렬·가로 스크롤</td></tr>
+        <tr><td><b>PDF</b></td><td><span class="tag">페이지 렌더</span></td><td>고해상도 페이지 + 텍스트 추출</td></tr>
+        <tr><td><b>이미지</b></td><td><span class="tag">줌 뷰어</span></td><td>핀치 줌·팬 + 온디바이스 OCR(한국어·영문)</td></tr>
+        <tr><td><b>Google 문서</b></td><td><span class="tag">PDF 렌더</span></td><td>Drive 가상 파일을 PDF로 내보내 판독</td></tr>
+        <tr><td><b>TXT / Markdown</b></td><td><span class="tag">편집 가능</span></td><td>뷰어에서 바로 수정·저장</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="ai" style="background:#fff;">
+  <div class="wrap">
+    <h2 class="sec-title">원하는 AI로 연결</h2>
+    <p class="sec-sub">제공자를 선택하면 엔드포인트와 기본 모델이 자동 설정됩니다. API 키는 제공자별로 안전하게 따로 저장됩니다.</p>
+    <div class="providers">
+      <div class="provider">ChatGPT<small>OpenAI · gpt-4o-mini</small></div>
+      <div class="provider">Claude<small>Anthropic · claude-sonnet-4</small></div>
+      <div class="provider">Gemini<small>Google · gemini-2.0-flash</small></div>
+      <div class="provider">Grok<small>xAI · grok-3</small></div>
+      <div class="provider">직접 입력<small>Ollama · LM Studio · 사내 LLM</small></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="cta">
+      <h2>지금 바로 사용해 보세요</h2>
+      <p>GitHub Releases에서 서명된 APK를 내려받아 설치하면 끝. 회원가입도, 서버도 필요 없습니다.</p>
+      <a class="btn" href="https://github.com/morogohi/AiMultiViewer/releases/latest">⬇ 최신 APK 다운로드</a>
+      <div class="note">Android 8.0(API 26) 이상 · 설치 시 "출처를 알 수 없는 앱" 허용 필요</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    AI 멀티뷰어 · <a href="https://github.com/morogohi/AiMultiViewer">GitHub</a> ·
+    <a href="https://github.com/morogohi/AiMultiViewer/blob/master/docs/USER_GUIDE.md">사용자 가이드</a> ·
+    <a href="https://github.com/morogohi/AiMultiViewer/blob/master/docs/DEVELOPMENT.md">개발 문서</a>
+  </div>
+</footer>
+
+</body>
+</html>
