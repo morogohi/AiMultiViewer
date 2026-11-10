@@ -119,3 +119,10 @@ data/
 - M2(잔여): DOC(Word 97) 네이티브 파서
 - M3: 온디바이스 LLM(MediaPipe/Gemma) + 벡터 검색 기반 진짜 RAG
 - ~~M4: Obsidian 볼트 내보내기~~ ✅ v0.3.0 완료 (llm-wiki 자동 수집)
+
+
+## 저작권 및 이용조건
+- **저작권자:** 양인석 (Inseok Yang, GitHub 계정 morogohi) · © 2026 · All rights reserved. — [LICENSE](LICENSE)
+- 자체 제작 코드·디자인·콘텐츠의 복제·수정·재배포 및 별도 서비스로의 이용은 사전 서면 허락이 필요합니다. 저장소 공개는 오픈소스 이용허락이 아니며, GitHub 이용약관에 따른 열람·포크는 가능합니다.
+- 제3자 라이브러리는 각 라이선스를 따릅니다: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- 상세 안내: https://morogohi.github.io/AiMultiViewer/copyright.html
